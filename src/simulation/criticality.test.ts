@@ -24,10 +24,12 @@ const baseParameters: WorldParameters = {
   dissipationRate: 0,
   conversionRate: 0,
   defaultThreshold: 0.5,
-  defaultPropensity: 1,
-  defaultCoupling: 1,
+  defaultActivationProbability: 0,
+  defaultDeactivationProbability: 0,
+  defaultResistance: 0,
   defaultVigor: 0,
   variability: 0,
+  quiescence: 0,
   ticksPerSecond: 10,
   maxHistory: 32
 };
@@ -71,26 +73,28 @@ describe("criticality simulation", () => {
     expect(world.history[0]).toMatchObject({ tick: 0, activeCount: 0 });
   });
 
-  it("bumps each agent default by a symmetric random offset scaled by variability", () => {
+  it("varies each agent default by a symmetric multiplicative factor", () => {
     const params = {
       ...baseParameters,
       width: 1,
       height: 1,
       defaultThreshold: 0.5,
-      defaultPropensity: 0.5,
-      defaultCoupling: 0.5,
+      defaultActivationProbability: 0.5,
+      defaultDeactivationProbability: 0.25,
+      defaultResistance: 0.5,
       defaultVigor: 0.05,
       variability: 0.2
     };
 
-    // Draw order per agent: fuel, threshold, propensity, coupling, vigor.
-    const agent = agentAt(createWorld(params, sequence([0.5, 0.75, 0.25, 1, 0])), 0);
+    // Draw order per agent: fuel, threshold, activation, deactivation, resistance, vigor.
+    const agent = agentAt(createWorld(params, sequence([0.5, 0.75, 0.25, 1, 0, 0.5])), 0);
 
     expect(agent.fuel).toBeCloseTo(0.25); // clamp01(0.5) * INITIAL_FUEL_MAX
-    expect(agent.threshold).toBeCloseTo(0.6); // 0.5 + (0.75*2-1)*0.2
-    expect(agent.propensity).toBeCloseTo(0.4); // 0.5 + (0.25*2-1)*0.2
-    expect(agent.coupling).toBeCloseTo(0.7); // 0.5 + (1*2-1)*0.2
-    expect(agent.vigor).toBe(0); // 0.05 + (0*2-1)*0.2 = -0.15 -> clamped
+    expect(agent.threshold).toBeCloseTo(0.55); // 0.5 * (1 + (0.75*2-1)*0.2)
+    expect(agent.activationProbability).toBeCloseTo(0.45); // 0.5 * 0.9
+    expect(agent.deactivationProbability).toBeCloseTo(0.3); // 0.25 * 1.2
+    expect(agent.resistance).toBeCloseTo(0.4); // 0.5 * 0.8
+    expect(agent.vigor).toBeCloseTo(0.05); // 0.05 * 1
   });
 
   it("keeps agent defaults homogeneous and draws only fuel when variability is zero", () => {
@@ -100,20 +104,28 @@ describe("criticality simulation", () => {
     // Only fuel consumes a draw per agent, so both fuels track the sequence.
     expect(world.agents.map((agent) => agent.fuel)).toEqual([0.2, 0.4]);
     expect(world.agents.every((agent) => agent.threshold === baseParameters.defaultThreshold)).toBe(true);
-    expect(world.agents.every((agent) => agent.propensity === baseParameters.defaultPropensity)).toBe(true);
-    expect(world.agents.every((agent) => agent.coupling === baseParameters.defaultCoupling)).toBe(true);
+    expect(
+      world.agents.every(
+        (agent) => agent.activationProbability === baseParameters.defaultActivationProbability
+      )
+    ).toBe(true);
+    expect(
+      world.agents.every(
+        (agent) => agent.deactivationProbability === baseParameters.defaultDeactivationProbability
+      )
+    ).toBe(true);
+    expect(world.agents.every((agent) => agent.resistance === baseParameters.defaultResistance)).toBe(true);
   });
 
   it("applies a random external trigger to one agent using trigger magnitude as a maximum", () => {
     const params = {
       ...baseParameters,
       triggerRate: 1,
-      triggerMagnitude: 0.5,
-      defaultCoupling: 0
+      triggerMagnitude: 0.5
     };
     const world = createWorld(params);
 
-    const next = stepWorld(world, params, sequence([0, 0.8, 0.6], 0));
+    const next = stepWorld(world, params, sequence([0, 0.8, 0.6, 0], 0));
 
     expect(next.agents.map((agent) => agent.energy)).toEqual([
       0, 0, 0,
@@ -123,19 +135,49 @@ describe("criticality simulation", () => {
     expect(next.stats.triggered).toBe(true);
     expect(next.stats.triggeredIndex).toBe(7);
     expect(next.stats.triggeredEnergy).toBeCloseTo(0.3);
+    expect(next.stats.triggeredDuration).toBe(1);
   });
 
-  it("moves neighbor energy with an order-independent Moore-neighborhood snapshot", () => {
-    const world = createWorld(baseParameters);
-    replaceAgent(world, 4, { energy: 0.8, coupling: 0 });
+  it("emits only active excess energy to neighbors", () => {
+    const inactive = createWorld(baseParameters);
+    replaceAgent(inactive, 4, { active: false, energy: 0.8, threshold: 0.5 });
 
-    const next = stepWorld(world, baseParameters, sequence([], 0));
+    const afterInactive = stepWorld(inactive, baseParameters, sequence([], 0.5));
 
-    expect(next.agents.map((agent) => agent.energy)).toEqual([
-      0.1, 0.1, 0.1,
-      0.1, 0, 0.1,
-      0.1, 0.1, 0.1
+    expect(afterInactive.agents.map((agent) => agent.energy)).toEqual([
+      0, 0, 0,
+      0, 0.8, 0,
+      0, 0, 0
     ]);
+
+    const active = createWorld(baseParameters);
+    replaceAgent(active, 4, { active: true, energy: 0.8, threshold: 0.5 });
+
+    const afterActive = stepWorld(active, baseParameters, sequence([], 0.5));
+
+    expect(afterActive.agents.map((agent) => agent.energy)).toEqual([
+      expect.closeTo(0.0375),
+      expect.closeTo(0.0375),
+      expect.closeTo(0.0375),
+      expect.closeTo(0.0375),
+      expect.closeTo(0.5),
+      expect.closeTo(0.0375),
+      expect.closeTo(0.0375),
+      expect.closeTo(0.0375),
+      expect.closeTo(0.0375)
+    ]);
+    expect(afterActive.stats.totalEnergy).toBeCloseTo(0.8);
+  });
+
+  it("uses resistance to reduce absorbed neighbor energy", () => {
+    const params = { ...baseParameters, defaultResistance: 0.5 };
+    const world = createWorld(params);
+    replaceAgent(world, 4, { active: true, energy: 0.8, threshold: 0.5 });
+
+    const next = stepWorld(world, params, sequence([], 0.5));
+
+    expect(agentAt(next, 0).energy).toBeCloseTo(0.01875);
+    expect(agentAt(next, 4).energy).toBeCloseTo(0.65);
     expect(next.stats.totalEnergy).toBeCloseTo(0.8);
   });
 
@@ -144,7 +186,6 @@ describe("criticality simulation", () => {
       ...baseParameters,
       width: 1,
       height: 1,
-      defaultCoupling: 0,
       conversionRate: 0.25,
       dissipationRate: 0.5
     };
@@ -159,32 +200,118 @@ describe("criticality simulation", () => {
     expect(next.stats.dissipatedEnergy).toBeCloseTo(0.225);
   });
 
-  it("activates above threshold, deactivates below threshold, and refuses activation without fuel", () => {
+  it("uses separate activation and deactivation probabilities", () => {
     const params = {
       ...baseParameters,
       width: 1,
       height: 1,
-      defaultCoupling: 0,
-      defaultPropensity: 0
+      defaultActivationProbability: 0.7,
+      defaultDeactivationProbability: 0.4
     };
 
     const energised = createWorld(params);
-    replaceAgent(energised, 0, { energy: 0.8, fuel: 0.2, threshold: 0.5, propensity: 0 });
-    expect(agentAt(stepWorld(energised, params, sequence([], 0.5)), 0).active).toBe(true);
+    replaceAgent(energised, 0, {
+      energy: 0.8,
+      fuel: 0.2,
+      threshold: 0.5,
+      activationProbability: 0.7
+    });
+    expect(agentAt(stepWorld(energised, params, sequence([], 0.69)), 0).active).toBe(true);
+
+    const missedActivation = createWorld(params);
+    replaceAgent(missedActivation, 0, {
+      energy: 0.8,
+      fuel: 0.2,
+      threshold: 0.5,
+      activationProbability: 0.7
+    });
+    expect(agentAt(stepWorld(missedActivation, params, sequence([], 0.71)), 0).active).toBe(false);
 
     const depleted = createWorld(params);
-    replaceAgent(depleted, 0, { energy: 0.8, fuel: 0, threshold: 0.5, propensity: 0 });
+    replaceAgent(depleted, 0, { energy: 0.8, fuel: 0, threshold: 0.5, activationProbability: 1 });
     expect(agentAt(stepWorld(depleted, params, sequence([], 0.5)), 0).active).toBe(false);
 
     const cooling = createWorld(params);
-    replaceAgent(cooling, 0, { active: true, energy: 0.1, fuel: 0.2, threshold: 0.5, propensity: 0 });
-    expect(agentAt(stepWorld(cooling, params, sequence([], 0.5)), 0).active).toBe(false);
+    replaceAgent(cooling, 0, {
+      active: true,
+      energy: 0.1,
+      fuel: 0.2,
+      threshold: 0.5,
+      deactivationProbability: 0.4
+    });
+    expect(agentAt(stepWorld(cooling, params, sequence([], 0.39)), 0).active).toBe(false);
+
+    const sustained = createWorld(params);
+    replaceAgent(sustained, 0, {
+      active: true,
+      energy: 0.1,
+      fuel: 0.2,
+      threshold: 0.5,
+      deactivationProbability: 0.4
+    });
+    expect(agentAt(stepWorld(sustained, params, sequence([], 0.41)), 0).active).toBe(true);
   });
 
-  it("activates a trigger's target before neighbor coupling drains its energy", () => {
+  it("reduces new trigger frequency as quiescence rises with average energy", () => {
+    const params = {
+      ...baseParameters,
+      width: 1,
+      height: 1,
+      triggerRate: 1,
+      triggerMagnitude: 1,
+      quiescence: 1
+    };
+    const world = createWorld(params);
+    replaceAgent(world, 0, { energy: 0.5 });
+
+    const quiet = stepWorld(world, params, sequence([0.6], 0));
+
+    expect(quiet.stats.triggered).toBe(false);
+    expect(agentAt(quiet, 0).energy).toBe(0.5);
+
+    const unquiet = stepWorld(
+      world,
+      { ...params, quiescence: 0 },
+      sequence([0.6, 0, 0.4, 0], 0)
+    );
+
+    expect(unquiet.stats.triggered).toBe(true);
+    expect(agentAt(unquiet, 0).energy).toBeCloseTo(0.9);
+  });
+
+  it("keeps trigger inputs active for a random duration from 1 to 10 steps", () => {
+    const params = {
+      ...baseParameters,
+      width: 1,
+      height: 1,
+      triggerRate: 1,
+      triggerMagnitude: 0.5
+    };
+    let world = createWorld(params);
+
+    world = stepWorld(world, params, sequence([0, 0, 0.6, 0.25], 0));
+
+    expect(agentAt(world, 0).energy).toBeCloseTo(0.3);
+    expect(world.stats.triggeredDuration).toBe(3);
+    expect(world.triggerInputs).toEqual([
+      { agentIndex: 0, energyPerStep: 0.3, remainingSteps: 2 }
+    ]);
+
+    world = stepWorld(world, { ...params, triggerRate: 0 }, sequence([], 0));
+    expect(agentAt(world, 0).energy).toBeCloseTo(0.6);
+    expect(world.triggerInputs).toEqual([
+      { agentIndex: 0, energyPerStep: 0.3, remainingSteps: 1 }
+    ]);
+
+    world = stepWorld(world, { ...params, triggerRate: 0 }, sequence([], 0));
+    expect(agentAt(world, 0).energy).toBeCloseTo(0.9);
+    expect(world.triggerInputs).toEqual([]);
+  });
+
+  it("activates a trigger's target before neighbor transfer drains its energy", () => {
     // Root-cause regression: a cell holding enough energy to cross its threshold
     // must be allowed to activate before that energy is shed to neighbors. With
-    // strong coupling the old ordering diffused the spike away first, so the cell
+    // low resistance the old ordering diffused the spike away first, so the cell
     // could never fire even though it briefly held plenty of energy.
     const params = {
       ...baseParameters,
@@ -192,12 +319,18 @@ describe("criticality simulation", () => {
       triggerMagnitude: 0,
       dissipationRate: 0,
       conversionRate: 0,
-      defaultCoupling: 1,
+      defaultResistance: 0,
       defaultThreshold: 0.1,
-      defaultPropensity: 0
+      defaultActivationProbability: 1
     };
     const world = createWorld(params);
-    replaceAgent(world, 4, { energy: 0.5, fuel: 0.2, threshold: 0.1, propensity: 0, coupling: 1 });
+    replaceAgent(world, 4, {
+      energy: 0.5,
+      fuel: 0.2,
+      threshold: 0.1,
+      activationProbability: 1,
+      resistance: 0
+    });
 
     const next = stepWorld(world, params, sequence([], 0.5));
 

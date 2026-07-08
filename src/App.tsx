@@ -12,6 +12,15 @@ import {
   type WorldParameters,
   type WorldState
 } from "./simulation/criticality";
+import {
+  deleteSavedParameterSet,
+  loadCurrentSettings,
+  loadSavedParameterSets,
+  saveCurrentSettings,
+  saveParameterSet,
+  type AppSettings,
+  type SavedParameterSet
+} from "./storage/settings";
 
 type ParameterKey = keyof WorldParameters;
 
@@ -64,6 +73,15 @@ const WORLD_CONTROLS: ControlDefinition[] = [
     format: formatDecimal
   },
   {
+    key: "quiescence",
+    label: "Quiescence",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    helper: "Reduces new trigger frequency as average energy rises.",
+    format: formatPercent
+  },
+  {
     key: "dissipationRate",
     label: "Dissipation",
     min: 0,
@@ -102,21 +120,30 @@ const AGENT_CONTROLS: ControlDefinition[] = [
     format: formatDecimal
   },
   {
-    key: "defaultPropensity",
-    label: "Propensity threshold",
+    key: "defaultActivationProbability",
+    label: "Activation probability",
     min: 0,
     max: 1,
     step: 0.01,
-    helper: "The PLAN rule flips state when random() is greater than this value.",
+    helper: "Chance that an energized agent activates above its threshold.",
     format: formatDecimal
   },
   {
-    key: "defaultCoupling",
-    label: "Coupling",
+    key: "defaultDeactivationProbability",
+    label: "Deactivation probability",
     min: 0,
     max: 1,
     step: 0.01,
-    helper: "Proportion of neighboring released energy an agent absorbs.",
+    helper: "Chance that an active agent deactivates below its threshold.",
+    format: formatDecimal
+  },
+  {
+    key: "defaultResistance",
+    label: "Resistance",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    helper: "Fraction of neighboring excess energy resisted instead of absorbed.",
     format: formatDecimal
   },
   {
@@ -159,24 +186,53 @@ const COOL_RAMP: [Rgb, Rgb, Rgb] = [
   [34, 197, 94]
 ];
 
-const initialSeed = createRandomSeed();
-
 type Rgb = readonly [number, number, number];
 
 export function App() {
-  const [parameters, setParameters] = useState<WorldParameters>(DEFAULT_PARAMETERS);
-  const [seed, setSeed] = useState(initialSeed);
-  const randomRef = useRef<RandomSource>(createSeededRandom(initialSeed));
+  const initialSettingsRef = useRef<AppSettings | null>(null);
+
+  if (!initialSettingsRef.current) {
+    initialSettingsRef.current = createInitialSettings();
+  }
+
+  const initialSettings = initialSettingsRef.current;
+  const [parameters, setParameters] = useState<WorldParameters>(initialSettings.parameters);
+  const [seed, setSeed] = useState(initialSettings.seed);
+  const randomRef = useRef<RandomSource>(createSeededRandom(initialSettings.seed));
   const parametersRef = useRef(parameters);
   const [world, setWorld] = useState<WorldState>(() =>
-    createWorld(DEFAULT_PARAMETERS, randomRef.current)
+    createWorld(initialSettings.parameters, randomRef.current)
   );
   const [running, setRunning] = useState(false);
+  const [savedSets, setSavedSets] = useState<SavedParameterSet[]>(() =>
+    loadSavedParameterSets()
+  );
+  const [selectedSetId, setSelectedSetId] = useState("");
+  const [parameterSetName, setParameterSetName] = useState("");
+  const [storageStatus, setStorageStatus] = useState("");
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
     parametersRef.current = parameters;
   }, [parameters]);
+
+  useEffect(() => {
+    saveCurrentSettings({ parameters, seed });
+  }, [parameters, seed]);
+
+  useEffect(() => {
+    if (savedSets.length === 0) {
+      if (selectedSetId) {
+        setSelectedSetId("");
+      }
+
+      return;
+    }
+
+    if (!savedSets.some((set) => set.id === selectedSetId)) {
+      setSelectedSetId(savedSets[0]?.id ?? "");
+    }
+  }, [savedSets, selectedSetId]);
 
   useEffect(() => {
     drawWorld(canvasRef.current, world);
@@ -216,6 +272,58 @@ export function App() {
     randomRef.current = createSeededRandom(nextSeed);
     setWorld(createWorld(parametersRef.current, randomRef.current));
   }, []);
+
+  const saveNamedSet = useCallback(() => {
+    const saved = saveParameterSet({
+      name: parameterSetName,
+      parameters,
+      seed,
+      history: world.history
+    });
+
+    if (!saved) {
+      setStorageStatus("Unable to save this set.");
+      return;
+    }
+
+    setSavedSets(loadSavedParameterSets());
+    setSelectedSetId(saved.id);
+    setParameterSetName(saved.name);
+    setStorageStatus(`Saved "${saved.name}".`);
+  }, [parameterSetName, parameters, seed, world.history]);
+
+  const loadNamedSet = useCallback(() => {
+    const saved = savedSets.find((set) => set.id === selectedSetId);
+
+    if (!saved) {
+      setStorageStatus("Choose a saved set first.");
+      return;
+    }
+
+    setRunning(false);
+    setParameters(saved.parameters);
+    parametersRef.current = saved.parameters;
+    setSeed(saved.seed);
+    randomRef.current = createSeededRandom(saved.seed);
+    setWorld(createWorld(saved.parameters, randomRef.current));
+    saveCurrentSettings({ parameters: saved.parameters, seed: saved.seed });
+    setParameterSetName(saved.name);
+    setStorageStatus(`Loaded "${saved.name}".`);
+  }, [savedSets, selectedSetId]);
+
+  const deleteNamedSet = useCallback(() => {
+    const saved = savedSets.find((set) => set.id === selectedSetId);
+
+    if (!saved) {
+      setStorageStatus("Choose a saved set first.");
+      return;
+    }
+
+    const nextSets = deleteSavedParameterSet(saved.id);
+    setSavedSets(nextSets);
+    setSelectedSetId(nextSets[0]?.id ?? "");
+    setStorageStatus(`Deleted "${saved.name}".`);
+  }, [savedSets, selectedSetId]);
 
   const displayStats = useMemo(() => makeDisplayStats(world), [world]);
 
@@ -298,6 +406,17 @@ export function App() {
               />
             </label>
           </div>
+          <SavedSetsControl
+            name={parameterSetName}
+            savedSets={savedSets}
+            selectedSetId={selectedSetId}
+            status={storageStatus}
+            onDelete={deleteNamedSet}
+            onLoad={loadNamedSet}
+            onNameChange={setParameterSetName}
+            onSave={saveNamedSet}
+            onSelectSet={setSelectedSetId}
+          />
           <ControlGroup
             title="Grid"
             description="Dimensions take effect when the world is reset."
@@ -322,6 +441,83 @@ export function App() {
         </aside>
       </section>
     </main>
+  );
+}
+
+function createInitialSettings(): AppSettings {
+  return loadCurrentSettings() ?? {
+    parameters: DEFAULT_PARAMETERS,
+    seed: createRandomSeed()
+  };
+}
+
+function SavedSetsControl({
+  name,
+  savedSets,
+  selectedSetId,
+  status,
+  onDelete,
+  onLoad,
+  onNameChange,
+  onSave,
+  onSelectSet
+}: {
+  name: string;
+  savedSets: SavedParameterSet[];
+  selectedSetId: string;
+  status: string;
+  onDelete: () => void;
+  onLoad: () => void;
+  onNameChange: (value: string) => void;
+  onSave: () => void;
+  onSelectSet: (id: string) => void;
+}) {
+  const canSave = name.trim().length > 0;
+  const hasSelectedSet = savedSets.some((set) => set.id === selectedSetId);
+
+  return (
+    <section className="control-group saved-sets">
+      <div>
+        <h2>Saved sets</h2>
+      </div>
+      <label className="saved-set-field">
+        Name
+        <input
+          type="text"
+          value={name}
+          onChange={(event) => onNameChange(event.target.value)}
+        />
+      </label>
+      <label className="saved-set-field">
+        Saved
+        <select
+          value={selectedSetId}
+          onChange={(event) => onSelectSet(event.target.value)}
+          disabled={savedSets.length === 0}
+        >
+          <option value="">No saved sets</option>
+          {savedSets.map((set) => (
+            <option key={set.id} value={set.id}>
+              {set.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="saved-set-actions">
+        <button type="button" onClick={onSave} disabled={!canSave}>
+          Save
+        </button>
+        <button type="button" onClick={onLoad} disabled={!hasSelectedSet}>
+          Load
+        </button>
+        <button type="button" onClick={onDelete} disabled={!hasSelectedSet}>
+          Delete
+        </button>
+      </div>
+      <p className="saved-set-status" aria-live="polite">
+        {status}
+      </p>
+    </section>
   );
 }
 
@@ -497,10 +693,13 @@ function makeDisplayStats(world: WorldState): Array<{ label: string; value: stri
     { label: "Avg energy", value: formatDecimal(world.stats.averageEnergy) },
     { label: "Avg fuel", value: formatDecimal(world.stats.averageFuel) },
     { label: "Avalanche", value: String(world.stats.avalanche) },
+    { label: "Trigger inputs", value: String(world.stats.activeTriggerCount) },
     {
       label: "Last trigger",
       value: world.stats.triggered
-        ? `#${world.stats.triggeredIndex ?? "?"} +${formatDecimal(world.stats.triggeredEnergy)}`
+        ? `#${world.stats.triggeredIndex ?? "?"} +${formatDecimal(world.stats.triggeredEnergy)}${
+            world.stats.triggeredDuration > 0 ? ` x${world.stats.triggeredDuration}` : ""
+          }`
         : "none"
     }
   ];
