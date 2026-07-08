@@ -216,32 +216,6 @@ export function App() {
         <div>
           <p className="eyebrow">Self-organizing criticality</p>
         </div>
-        <div className="runner-card" aria-label="World runner controls">
-          <button
-            className="primary-button"
-            type="button"
-            onClick={() => setRunning((current) => !current)}
-          >
-            {running ? "Pause Auto" : "Start Auto"}
-          </button>
-          <button type="button" onClick={step}>
-            Step
-          </button>
-          <button type="button" onClick={reset}>
-            Reset
-          </button>
-          <button type="button" onClick={randomizeSeed}>
-            New seed
-          </button>
-          <label className="seed-input">
-            Seed
-            <input
-              type="number"
-              value={seed}
-              onChange={(event) => setSeed(Number(event.target.value) || 0)}
-            />
-          </label>
-        </div>
       </section>
 
       <section className="dashboard">
@@ -289,6 +263,32 @@ export function App() {
         </div>
 
         <aside className="control-panel" aria-label="Simulation parameters">
+          <div className="runner-card" aria-label="World runner controls">
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => setRunning((current) => !current)}
+            >
+              {running ? "Pause Auto" : "Start Auto"}
+            </button>
+            <button type="button" onClick={step}>
+              Step
+            </button>
+            <button type="button" onClick={reset}>
+              Reset
+            </button>
+            <button type="button" onClick={randomizeSeed}>
+              New seed
+            </button>
+            <label className="seed-input">
+              Seed
+              <input
+                type="number"
+                value={seed}
+                onChange={(event) => setSeed(Number(event.target.value) || 0)}
+              />
+            </label>
+          </div>
           <ControlGroup
             title="Grid"
             description="Dimensions take effect when the world is reset."
