@@ -212,15 +212,9 @@ export function App() {
 
   return (
     <main className="app-shell">
-      <section className="hero" aria-labelledby="page-title">
+      <section className="hero" aria-label="Self-organizing criticality">
         <div>
           <p className="eyebrow">Self-organizing criticality</p>
-          <h1 id="page-title">Criticality Simulator</h1>
-          <p className="hero-copy">
-            Each pixel is an agent with random initial fuel, energy, threshold,
-            propensity, coupling, and vigor. Random shocks excite the world;
-            active agents convert fuel into energy and neighbors absorb released energy.
-          </p>
         </div>
         <div className="runner-card" aria-label="World runner controls">
           <button
