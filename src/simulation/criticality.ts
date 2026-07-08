@@ -57,7 +57,7 @@ export const DEFAULT_PARAMETERS: WorldParameters = {
   triggerMagnitude: 0.75,
   dissipationRate: 0.04,
   conversionRate: 0.035,
-  defaultThreshold: 0.42,
+  defaultThreshold: 0.1,
   defaultPropensity: 0.35,
   defaultCoupling: 0.65,
   defaultVigor: 0.01,
@@ -142,9 +142,13 @@ export function stepWorld(
   const previousActive = agents.map((agent) => agent.active);
   const trigger = applyExternalTrigger(agents, parameters, random);
 
-  transferNeighborEnergy(agents, width, height);
+  // Decide conversion and activation from the energy each cell currently holds,
+  // THEN propagate energy to neighbors. Running the neighbor transfer first would
+  // diffuse a fresh trigger below the activation threshold before any cell could
+  // fire, so triggers appeared to do nothing.
   convertActiveFuel(agents, parameters);
   applyActivationRules(agents, random);
+  transferNeighborEnergy(agents, width, height);
   const dissipatedEnergy = dissipateEnergy(agents, parameters);
   refuelInactiveAgents(agents);
 

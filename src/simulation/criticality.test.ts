@@ -147,6 +147,46 @@ describe("criticality simulation", () => {
     expect(agentAt(stepWorld(cooling, params, sequence([], 0.5)), 0).active).toBe(false);
   });
 
+  it("activates a trigger's target before neighbor coupling drains its energy", () => {
+    // Root-cause regression: a cell holding enough energy to cross its threshold
+    // must be allowed to activate before that energy is shed to neighbors. With
+    // strong coupling the old ordering diffused the spike away first, so the cell
+    // could never fire even though it briefly held plenty of energy.
+    const params = {
+      ...baseParameters,
+      triggerRate: 0,
+      triggerMagnitude: 0,
+      dissipationRate: 0,
+      conversionRate: 0,
+      defaultCoupling: 1,
+      defaultThreshold: 0.1,
+      defaultPropensity: 0
+    };
+    const world = createWorld(params);
+    replaceAgent(world, 4, { energy: 0.5, fuel: 0.2, threshold: 0.1, propensity: 0, coupling: 1 });
+
+    const next = stepWorld(world, params, sequence([], 0.5));
+
+    expect(agentAt(next, 4).active).toBe(true);
+    expect(next.stats.activeCount).toBeGreaterThan(0);
+  });
+
+  it("produces visible activation from random triggers under the shipped defaults", () => {
+    // End-to-end guard for the report "triggers occur but nothing activates":
+    // an auto run with DEFAULT_PARAMETERS must actually light up agents.
+    const params = { ...DEFAULT_PARAMETERS, width: 48, height: 32, maxHistory: 16 };
+    const random = createSeededRandom(12345);
+    let world = createWorld(params, random);
+    let peakActive = 0;
+
+    for (let tick = 0; tick < 400; tick += 1) {
+      world = stepWorld(world, params, random);
+      peakActive = Math.max(peakActive, world.stats.activeCount);
+    }
+
+    expect(peakActive).toBeGreaterThan(0);
+  });
+
   it("refuels inactive agents and keeps bounded history", () => {
     const params = { ...baseParameters, defaultVigor: 0.2, maxHistory: 2 };
     let world = createWorld(params);
