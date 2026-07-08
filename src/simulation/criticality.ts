@@ -74,6 +74,30 @@ export function isPathological(
   return health <= parameters.pathologyThreshold;
 }
 
+export function healingProbabilityForCell(
+  state: SimulationState,
+  index: number,
+  parameters: Pick<SimulationParameters, "pathologyThreshold">
+): number {
+  const health = state.health[index] ?? 1;
+
+  if (!isPathological(health, parameters)) {
+    return 1;
+  }
+
+  const neighbors = neighborIndicesFor(state, index);
+
+  if (neighbors.length === 0) {
+    return 0.5;
+  }
+
+  const healthyNeighbors = neighbors.filter(
+    (neighborIndex) => !isPathological(state.health[neighborIndex] ?? 1, parameters)
+  ).length;
+
+  return clamp01((healthyNeighbors + 1) / (neighbors.length + 2));
+}
+
 export function createInitialState(
   parameters: SimulationParameters,
   random: RandomSource = Math.random
@@ -123,38 +147,31 @@ export function stepSimulation(
       continue;
     }
 
-    const x = index % state.width;
-    const y = Math.floor(index / state.width);
-
-    for (const [dx, dy] of NEIGHBOR_OFFSETS) {
-      const neighborX = x + dx;
-      const neighborY = y + dy;
-
+    for (const neighborIndex of neighborIndicesFor(state, index)) {
       if (
-        neighborX < 0 ||
-        neighborY < 0 ||
-        neighborX >= state.width ||
-        neighborY >= state.height
+        parameters.neighborTriggerProbability > 0 &&
+        random() < parameters.neighborTriggerProbability
       ) {
-        continue;
-      }
-
-      if (random() < parameters.neighborTriggerProbability) {
-        damage[neighborY * state.width + neighborX] += parameters.pathologyDamage;
+        damage[neighborIndex] += parameters.pathologyDamage;
         spreadEvents += 1;
       }
     }
   }
 
-  const externalEvents = random() < parameters.externalTriggerProbability ? 1 : 0;
+  const externalEvents =
+    parameters.externalTriggerProbability > 0 &&
+    random() < parameters.externalTriggerProbability
+      ? 1
+      : 0;
   if (externalEvents === 1) {
     const target = Math.min(totalCells - 1, Math.floor(random() * totalCells));
     damage[target] += parameters.pathologyDamage;
   }
 
-  const nextHealth = state.health.map((health, index) =>
-    clamp01(health + parameters.recoveryRate - damage[index])
-  );
+  const nextHealth = state.health.map((health, index) => {
+    const recovery = recoveryForCell(state, index, parameters, random);
+    return clamp01(health + recovery - damage[index]);
+  });
 
   return {
     width: state.width,
@@ -168,6 +185,51 @@ export function stepSimulation(
       spreadEvents
     )
   };
+}
+
+function recoveryForCell(
+  state: SimulationState,
+  index: number,
+  parameters: SimulationParameters,
+  random: RandomSource
+): number {
+  const health = state.health[index] ?? 1;
+
+  if (parameters.recoveryRate <= 0 || health >= 1) {
+    return 0;
+  }
+
+  if (!isPathological(health, parameters)) {
+    return parameters.recoveryRate;
+  }
+
+  return random() < healingProbabilityForCell(state, index, parameters)
+    ? parameters.recoveryRate
+    : 0;
+}
+
+function neighborIndicesFor(state: SimulationState, index: number): number[] {
+  const x = index % state.width;
+  const y = Math.floor(index / state.width);
+  const neighbors: number[] = [];
+
+  for (const [dx, dy] of NEIGHBOR_OFFSETS) {
+    const neighborX = x + dx;
+    const neighborY = y + dy;
+
+    if (
+      neighborX < 0 ||
+      neighborY < 0 ||
+      neighborX >= state.width ||
+      neighborY >= state.height
+    ) {
+      continue;
+    }
+
+    neighbors.push(neighborY * state.width + neighborX);
+  }
+
+  return neighbors;
 }
 
 function summarize(

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_PARAMETERS,
   createInitialState,
+  healingProbabilityForCell,
   isPathological,
   stepSimulation,
   type RandomSource,
@@ -71,15 +72,41 @@ describe("criticality simulation", () => {
     expect(next.stats.spreadEvents).toBe(8);
   });
 
-  it("heals cells over time and clamps health to one", () => {
+  it("makes pathological cells more likely to heal with healthy neighbors", () => {
     const params = { ...baseParams, recoveryRate: 0.2 };
-    const state = createInitialState(params, sequence([]));
-    state.health[0] = 0.95;
-    state.health[1] = 0.25;
+    const supported = createInitialState(params, sequence([]));
+    supported.health[4] = 0.25;
 
-    const next = stepSimulation(state, params, sequence([]));
+    const surrounded = createInitialState(params, sequence([]));
+    surrounded.health.fill(0.25);
 
-    expect(next.health[0]).toBe(1);
-    expect(next.health[1]).toBeCloseTo(0.45);
+    expect(healingProbabilityForCell(supported, 4, params)).toBeCloseTo(0.9);
+    expect(healingProbabilityForCell(surrounded, 4, params)).toBeCloseTo(0.1);
+    expect(healingProbabilityForCell(supported, 4, params)).toBeGreaterThan(
+      healingProbabilityForCell(surrounded, 4, params)
+    );
+  });
+
+  it("heals pathological cells probabilistically and clamps health to one", () => {
+    const params = { ...baseParams, recoveryRate: 0.2 };
+    const supported = createInitialState(params, sequence([]));
+    supported.health[0] = 0.95;
+    supported.health[4] = 0.25;
+
+    const healed = stepSimulation(supported, params, sequence([0.89]));
+
+    expect(healed.health[0]).toBe(1);
+    expect(healed.health[4]).toBeCloseTo(0.45);
+
+    const surrounded = createInitialState(params, sequence([]));
+    surrounded.health.fill(0.25);
+
+    const notHealed = stepSimulation(
+      surrounded,
+      params,
+      sequence([0, 0, 0, 0, 0.11])
+    );
+
+    expect(notHealed.health[4]).toBeCloseTo(0.25);
   });
 });

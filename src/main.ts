@@ -90,12 +90,12 @@ const CONTROL_DEFINITIONS: ControlDefinition[] = [
   },
   {
     key: "recoveryRate",
-    label: "Recovery per tick",
+    label: "Healing amount",
     min: 0,
     max: 0.08,
     step: 0.001,
     format: percent,
-    help: "Health restored to every item each tick before clamping at one."
+    help: "Health restored when a healing attempt succeeds. Healthy neighbors make pathological items more likely to heal."
   },
   {
     key: "ticksPerSecond",
@@ -127,7 +127,8 @@ root.innerHTML = `
     <h1>Criticality</h1>
     <p class="lede">
       Each pixel is an item with health from 0 to 1. Low-health items become
-      pathological, can damage neighbors, and may be triggered by external shocks.
+      pathological, can damage neighbors, heal more easily near healthy neighbors,
+      and may be triggered by external shocks.
     </p>
   </header>
 
@@ -177,8 +178,8 @@ root.innerHTML = `
     <aside class="control-card" aria-labelledby="controls-title">
       <h2 id="controls-title">Parameters</h2>
       <p class="muted">
-        Tune the balance between recovery, contagious neighbor damage, and random
-        external shocks. Dimension and initial-state changes reset the run.
+        Tune the balance between neighbor-supported healing, contagious damage,
+        and random external shocks. Dimension and initial-state changes reset the run.
       </p>
       <div id="controls" class="controls"></div>
     </aside>

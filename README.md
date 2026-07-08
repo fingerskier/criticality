@@ -2,7 +2,7 @@
 
 Self-organizing critical system simulator.
 
-The app visualizes a rectangle where each pixel is an item with health from 0 to 1. Low-health items are pathological; they can increase the pathology of adjacent neighbors, while random external events can trigger pathology anywhere in the system.
+The app visualizes a rectangle where each pixel is an item with health from 0 to 1. Low-health items are pathological; they can increase the pathology of adjacent neighbors, while random external events can trigger pathology anywhere in the system. Pathological items can heal over time, with healthy neighbors making healing more likely and pathological neighbors making it less likely.
 
 ## Develop
 
