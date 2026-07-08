@@ -31,13 +31,20 @@ General Algorithm
   * Loop
     1. Triggers ~ a random event can increase an Agent's energy by a random amount
     2. Async update of Agents' computed properties
+      * conversion
+        * an _active_ Agent converts some fuel to energy
+      * activation
+        * evaluated on the energy each Agent currently holds (including a fresh
+          trigger) _before_ any energy is transferred to neighbors
+        * if an agent's energy > threshold then rand() > propensity triggers activation
+        * if an agent's energy < threshold then rand() > propensity triggers deactivation
+        * ordering matters: if the transfer ran first, coupling would diffuse a
+          trigger below the threshold and no Agent would ever activate
       * transferred energy
         * an Agent gets 1/8 of each neighbor's energy multiplied by its coupling
         * the neighbor's energy is reduced by the same amount
+      * dissipation
         * dissipated_energy = leftover_energy * dissipation_rate
-      * activation
-        * if an agent's energy > threshold then rand() > propensity triggers activation
-        * if an agent's energy < threshold then rand() > propensity triggers deactivation
     3. Update Agents' fuel levels
   * Variables
     * trigger_rate

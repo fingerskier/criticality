@@ -26,7 +26,7 @@ CONVERT(agent):                 # only when active
     if agent.fuel == 0:         # caveat: no fuel => cannot stay active / activate
         agent.active = false
         return
-    delta = min(agent.fuel, CONVERSION_RATE)
+    delta = min(agent.fuel, CONVERSION_RATE, 1 - agent.energy)  # keep energy <= 1
     agent.fuel   -= delta
     agent.energy += delta
 
@@ -77,48 +77,59 @@ STEP(world):
         a = random agent in grid
         a.energy = clamp01(a.energy + world.trigger_magnitude())
 
-    # 2. ASYNC UPDATE of computed properties
-    #    Read from a snapshot so transfers are order-independent.
-    snapshot = copy(grid.energy)      # energies at start of this phase
-
-    for each agent (x,y) in grid:
-
-        # 2a. energy transfer from neighbors
-        for n in NEIGHBORS(x,y):
-            share    = (snapshot[n] / 8) * agent.coupling
-            absorbed = min(share, n.energy)   # can't take more than neighbor holds
-            agent.energy += absorbed
-            n.energy     -= absorbed          # neighbor loses the same amount
-
-        # 2b. active agents convert fuel -> energy
+    # 2. CONVERT — active agents turn fuel into energy
+    for each agent in grid:
         if agent.active:
             CONVERT(agent)
 
-        # 2c. activation / deactivation
+    # 3. ACTIVATION — decide active/inactive from the energy each agent
+    #    CURRENTLY holds (including a fresh trigger), BEFORE any energy is
+    #    shed to neighbors.
+    #
+    #    Order matters: if the neighbor transfer (step 4) runs first, coupling
+    #    diffuses a trigger's spike across its 8 neighbors and drops it back
+    #    below the threshold, so no agent ever activates. Deciding activation
+    #    before the transfer is what makes triggers able to fire a cell.
+    for each agent in grid:
         MAYBE_FLIP(agent)
 
-    # 2d. dissipation — leftover energy bled to environment
+    # 4. TRANSFER — neighbor coupling, computed from a start-of-phase snapshot
+    #    so the result is independent of grid scan order.
+    snapshot = copy(grid.energy)          # energies at start of this phase
+    for each agent (x,y) in grid:
+        for n in NEIGHBORS(x,y):
+            share = (snapshot[n] / 8) * agent.coupling
+            agent.energy += share
+            n.energy     -= share         # zero-sum: neighbor loses the same
     for each agent in grid:
-        dissipated    = agent.energy * world.dissipation_rate
-        agent.energy -= dissipated
+        agent.energy = clamp01(agent.energy)
 
-    # 3. FUEL UPDATE — inactive agents heal
+    # 5. DISSIPATION — leftover energy bled to the environment
+    for each agent in grid:
+        agent.energy -= agent.energy * world.dissipation_rate
+
+    # 6. FUEL UPDATE — inactive agents heal
     for each agent in grid:
         if not agent.active:
             REFUEL(agent)
 
-    # 4. DATA — record metrics for the time series
+    # 7. DATA — record metrics for the time series
     world.history.append({
         active_count:  count(agent.active),
         total_energy:  sum(agent.energy),
         total_fuel:    sum(agent.fuel),
-        avalanche:     size of this iteration's activation cascade,
+        avalanche:     count of agents that switched inactive -> active this step,
     })
 ```
 
 Notes
-- "Async" = each agent updated against a snapshot of neighbor energy, so a
-  cell's fate does not depend on grid scan order.
+- Ordering (trigger -> convert -> activate -> transfer -> dissipate -> refuel):
+  activation is evaluated on the energy a cell holds BEFORE the neighbor
+  transfer. Running the transfer first diffuses a trigger below threshold and
+  nothing ever activates. See the note on step 3.
+- "Order-independent" transfer = each agent's share is read from a snapshot of
+  neighbor energy taken at the start of the phase, so a cell's new energy does
+  not depend on grid scan order.
 - Energy conservation: neighbor transfer is zero-sum; only `dissipation_rate`
   and `trigger_magnitude` change total system energy.
 
