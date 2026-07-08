@@ -1,0 +1,164 @@
+import { describe, expect, it } from "vitest";
+import {
+  DEFAULT_PARAMETERS,
+  clamp01,
+  createSeededRandom,
+  createWorld,
+  stepWorld,
+  type Agent,
+  type RandomSource,
+  type WorldParameters
+} from "./criticality";
+
+function sequence(values: number[], fallback = 0): RandomSource {
+  let index = 0;
+  return () => values[index++] ?? fallback;
+}
+
+const baseParameters: WorldParameters = {
+  ...DEFAULT_PARAMETERS,
+  width: 3,
+  height: 3,
+  triggerRate: 0,
+  triggerMagnitude: 0,
+  dissipationRate: 0,
+  conversionRate: 0,
+  defaultFuel: 0.5,
+  defaultThreshold: 0.5,
+  defaultPropensity: 1,
+  defaultCoupling: 1,
+  defaultVigor: 0,
+  ticksPerSecond: 10,
+  maxHistory: 32
+};
+
+function agentAt(world: ReturnType<typeof createWorld>, index: number): Agent {
+  const agent = world.agents[index];
+
+  if (!agent) {
+    throw new Error(`Missing agent at index ${index}`);
+  }
+
+  return agent;
+}
+
+function replaceAgent(world: ReturnType<typeof createWorld>, index: number, patch: Partial<Agent>) {
+  world.agents[index] = { ...agentAt(world, index), ...patch };
+}
+
+describe("criticality simulation", () => {
+  it("clamps normalized values to the 0..1 range", () => {
+    expect(clamp01(-0.2)).toBe(0);
+    expect(clamp01(0.4)).toBe(0.4);
+    expect(clamp01(1.2)).toBe(1);
+  });
+
+  it("creates a rectangular world filled with the configured agent defaults", () => {
+    const world = createWorld(baseParameters);
+
+    expect(world.width).toBe(3);
+    expect(world.height).toBe(3);
+    expect(world.agents).toHaveLength(9);
+    expect(world.agents.every((agent) => agent.fuel === 0.5)).toBe(true);
+    expect(world.agents.every((agent) => agent.energy === 0)).toBe(true);
+    expect(world.agents.every((agent) => agent.active === false)).toBe(true);
+    expect(world.history[0]).toMatchObject({ tick: 0, activeCount: 0 });
+  });
+
+  it("applies a random external trigger to one agent using trigger magnitude as a maximum", () => {
+    const params = {
+      ...baseParameters,
+      triggerRate: 1,
+      triggerMagnitude: 0.5,
+      defaultCoupling: 0
+    };
+    const world = createWorld(params);
+
+    const next = stepWorld(world, params, sequence([0, 0.8, 0.6], 0));
+
+    expect(next.agents.map((agent) => agent.energy)).toEqual([
+      0, 0, 0,
+      0, 0, 0,
+      0, 0.3, 0
+    ]);
+    expect(next.stats.triggered).toBe(true);
+    expect(next.stats.triggeredIndex).toBe(7);
+    expect(next.stats.triggeredEnergy).toBeCloseTo(0.3);
+  });
+
+  it("moves neighbor energy with an order-independent Moore-neighborhood snapshot", () => {
+    const world = createWorld(baseParameters);
+    replaceAgent(world, 4, { energy: 0.8, coupling: 0 });
+
+    const next = stepWorld(world, baseParameters, sequence([], 0));
+
+    expect(next.agents.map((agent) => agent.energy)).toEqual([
+      0.1, 0.1, 0.1,
+      0.1, 0, 0.1,
+      0.1, 0.1, 0.1
+    ]);
+    expect(next.stats.totalEnergy).toBeCloseTo(0.8);
+  });
+
+  it("lets active agents convert fuel into energy, then dissipates energy", () => {
+    const params = {
+      ...baseParameters,
+      width: 1,
+      height: 1,
+      defaultCoupling: 0,
+      conversionRate: 0.25,
+      dissipationRate: 0.5
+    };
+    const world = createWorld(params);
+    replaceAgent(world, 0, { active: true, energy: 0.2, fuel: 0.4, threshold: 0.1 });
+
+    const next = stepWorld(world, params, sequence([], 0));
+
+    expect(agentAt(next, 0).fuel).toBeCloseTo(0.15);
+    expect(agentAt(next, 0).energy).toBeCloseTo(0.225);
+    expect(agentAt(next, 0).active).toBe(true);
+    expect(next.stats.dissipatedEnergy).toBeCloseTo(0.225);
+  });
+
+  it("activates above threshold, deactivates below threshold, and refuses activation without fuel", () => {
+    const params = {
+      ...baseParameters,
+      width: 1,
+      height: 1,
+      defaultCoupling: 0,
+      defaultPropensity: 0
+    };
+
+    const energised = createWorld(params);
+    replaceAgent(energised, 0, { energy: 0.8, fuel: 0.2, threshold: 0.5, propensity: 0 });
+    expect(agentAt(stepWorld(energised, params, sequence([], 0.5)), 0).active).toBe(true);
+
+    const depleted = createWorld(params);
+    replaceAgent(depleted, 0, { energy: 0.8, fuel: 0, threshold: 0.5, propensity: 0 });
+    expect(agentAt(stepWorld(depleted, params, sequence([], 0.5)), 0).active).toBe(false);
+
+    const cooling = createWorld(params);
+    replaceAgent(cooling, 0, { active: true, energy: 0.1, fuel: 0.2, threshold: 0.5, propensity: 0 });
+    expect(agentAt(stepWorld(cooling, params, sequence([], 0.5)), 0).active).toBe(false);
+  });
+
+  it("refuels inactive agents and keeps bounded history", () => {
+    const params = { ...baseParameters, defaultVigor: 0.2, maxHistory: 2 };
+    let world = createWorld(params);
+    replaceAgent(world, 0, { fuel: 0.9, vigor: 0.2 });
+
+    world = stepWorld(world, params, sequence([], 0));
+    world = stepWorld(world, params, sequence([], 0));
+
+    expect(agentAt(world, 0).fuel).toBe(1);
+    expect(world.history).toHaveLength(2);
+    expect(world.history.map((entry) => entry.tick)).toEqual([1, 2]);
+  });
+
+  it("creates deterministic random streams for reproducible simulations", () => {
+    const a = createSeededRandom(1234);
+    const b = createSeededRandom(1234);
+
+    expect([a(), a(), a()]).toEqual([b(), b(), b()]);
+  });
+});
