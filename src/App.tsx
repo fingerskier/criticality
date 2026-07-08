@@ -129,6 +129,15 @@ const AGENT_CONTROLS: ControlDefinition[] = [
     format: formatSmallDecimal
   },
   {
+    key: "variability",
+    label: "Variability",
+    min: 0,
+    max: 0.5,
+    step: 0.01,
+    helper: "Random +/- spread applied to each agent default on reset.",
+    format: formatDecimal
+  },
+  {
     key: "maxHistory",
     label: "History length",
     min: 30,

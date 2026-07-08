@@ -27,6 +27,7 @@ const baseParameters: WorldParameters = {
   defaultPropensity: 1,
   defaultCoupling: 1,
   defaultVigor: 0,
+  variability: 0,
   ticksPerSecond: 10,
   maxHistory: 32
 };
@@ -68,6 +69,39 @@ describe("criticality simulation", () => {
     expect(world.agents.every((agent) => agent.energy === 0)).toBe(true);
     expect(world.agents.every((agent) => agent.active === false)).toBe(true);
     expect(world.history[0]).toMatchObject({ tick: 0, activeCount: 0 });
+  });
+
+  it("bumps each agent default by a symmetric random offset scaled by variability", () => {
+    const params = {
+      ...baseParameters,
+      width: 1,
+      height: 1,
+      defaultThreshold: 0.5,
+      defaultPropensity: 0.5,
+      defaultCoupling: 0.5,
+      defaultVigor: 0.05,
+      variability: 0.2
+    };
+
+    // Draw order per agent: fuel, threshold, propensity, coupling, vigor.
+    const agent = agentAt(createWorld(params, sequence([0.5, 0.75, 0.25, 1, 0])), 0);
+
+    expect(agent.fuel).toBeCloseTo(0.25); // clamp01(0.5) * INITIAL_FUEL_MAX
+    expect(agent.threshold).toBeCloseTo(0.6); // 0.5 + (0.75*2-1)*0.2
+    expect(agent.propensity).toBeCloseTo(0.4); // 0.5 + (0.25*2-1)*0.2
+    expect(agent.coupling).toBeCloseTo(0.7); // 0.5 + (1*2-1)*0.2
+    expect(agent.vigor).toBe(0); // 0.05 + (0*2-1)*0.2 = -0.15 -> clamped
+  });
+
+  it("keeps agent defaults homogeneous and draws only fuel when variability is zero", () => {
+    const params = { ...baseParameters, width: 2, height: 1 };
+    const world = createWorld(params, sequence([0.4, 0.8], 0));
+
+    // Only fuel consumes a draw per agent, so both fuels track the sequence.
+    expect(world.agents.map((agent) => agent.fuel)).toEqual([0.2, 0.4]);
+    expect(world.agents.every((agent) => agent.threshold === baseParameters.defaultThreshold)).toBe(true);
+    expect(world.agents.every((agent) => agent.propensity === baseParameters.defaultPropensity)).toBe(true);
+    expect(world.agents.every((agent) => agent.coupling === baseParameters.defaultCoupling)).toBe(true);
   });
 
   it("applies a random external trigger to one agent using trigger magnitude as a maximum", () => {

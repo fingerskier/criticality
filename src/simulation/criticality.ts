@@ -21,6 +21,7 @@ export interface WorldParameters {
   defaultPropensity: number;
   defaultCoupling: number;
   defaultVigor: number;
+  variability: number;
   ticksPerSecond: number;
   maxHistory: number;
 }
@@ -61,6 +62,7 @@ export const DEFAULT_PARAMETERS: WorldParameters = {
   defaultPropensity: 0.35,
   defaultCoupling: 0.65,
   defaultVigor: 0.01,
+  variability: 0.15,
   ticksPerSecond: 24,
   maxHistory: 240
 };
@@ -179,15 +181,29 @@ function createAgentFromDefaults(
   parameters: WorldParameters,
   random: RandomSource
 ): Agent {
+  // Fuel always consumes exactly one draw first; the per-property bumps only
+  // draw when variability is positive, so a zero-variability world reproduces
+  // the same random stream (one fuel draw per agent) as a homogeneous grid.
+  const spread = Math.max(0, parameters.variability);
+
   return {
     fuel: clamp01(random()) * INITIAL_FUEL_MAX,
-    threshold: clamp01(parameters.defaultThreshold),
-    propensity: clamp01(parameters.defaultPropensity),
-    coupling: clamp01(parameters.defaultCoupling),
-    vigor: clamp01(parameters.defaultVigor),
+    threshold: bumpDefault(parameters.defaultThreshold, spread, random),
+    propensity: bumpDefault(parameters.defaultPropensity, spread, random),
+    coupling: bumpDefault(parameters.defaultCoupling, spread, random),
+    vigor: bumpDefault(parameters.defaultVigor, spread, random),
     energy: 0,
     active: false
   };
+}
+
+function bumpDefault(base: number, spread: number, random: RandomSource): number {
+  if (spread <= 0) {
+    return clamp01(base);
+  }
+
+  const offset = (random() * 2 - 1) * spread;
+  return clamp01(base + offset);
 }
 
 function cloneAgent(agent: Agent | undefined): Agent {
