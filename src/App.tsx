@@ -93,15 +93,6 @@ const WORLD_CONTROLS: ControlDefinition[] = [
 
 const AGENT_CONTROLS: ControlDefinition[] = [
   {
-    key: "defaultFuel",
-    label: "Default fuel",
-    min: 0,
-    max: 1,
-    step: 0.01,
-    helper: "Initial stored fuel for each agent after reset.",
-    format: formatDecimal
-  },
-  {
     key: "defaultThreshold",
     label: "Threshold",
     min: 0,
@@ -168,7 +159,9 @@ export function App() {
   const [seed, setSeed] = useState(initialSeed);
   const randomRef = useRef<RandomSource>(createSeededRandom(initialSeed));
   const parametersRef = useRef(parameters);
-  const [world, setWorld] = useState<WorldState>(() => createWorld(DEFAULT_PARAMETERS));
+  const [world, setWorld] = useState<WorldState>(() =>
+    createWorld(DEFAULT_PARAMETERS, randomRef.current)
+  );
   const [running, setRunning] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -205,14 +198,14 @@ export function App() {
 
   const reset = useCallback(() => {
     randomRef.current = createSeededRandom(seed);
-    setWorld(createWorld(parametersRef.current));
+    setWorld(createWorld(parametersRef.current, randomRef.current));
   }, [seed]);
 
   const randomizeSeed = useCallback(() => {
     const nextSeed = createRandomSeed();
     setSeed(nextSeed);
     randomRef.current = createSeededRandom(nextSeed);
-    setWorld(createWorld(parametersRef.current));
+    setWorld(createWorld(parametersRef.current, randomRef.current));
   }, []);
 
   const displayStats = useMemo(() => makeDisplayStats(world), [world]);
@@ -224,9 +217,9 @@ export function App() {
           <p className="eyebrow">Self-organizing criticality</p>
           <h1 id="page-title">Criticality Simulator</h1>
           <p className="hero-copy">
-            Each pixel is an agent with fuel, energy, threshold, propensity,
-            coupling, and vigor. Random shocks excite the world; active agents
-            convert fuel into energy and neighbors absorb released energy.
+            Each pixel is an agent with random initial fuel, energy, threshold,
+            propensity, coupling, and vigor. Random shocks excite the world;
+            active agents convert fuel into energy and neighbors absorb released energy.
           </p>
         </div>
         <div className="runner-card" aria-label="World runner controls">
@@ -318,7 +311,7 @@ export function App() {
           />
           <ControlGroup
             title="Agent defaults"
-            description="Defaults are copied into each agent when the grid is reset."
+            description="Fuel is randomized from 0 to 0.5 on reset; these defaults are copied into each agent."
             controls={AGENT_CONTROLS}
             parameters={parameters}
             onChange={updateParameter}

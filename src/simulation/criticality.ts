@@ -17,7 +17,6 @@ export interface WorldParameters {
   triggerMagnitude: number;
   dissipationRate: number;
   conversionRate: number;
-  defaultFuel: number;
   defaultThreshold: number;
   defaultPropensity: number;
   defaultCoupling: number;
@@ -58,7 +57,6 @@ export const DEFAULT_PARAMETERS: WorldParameters = {
   triggerMagnitude: 0.75,
   dissipationRate: 0.04,
   conversionRate: 0.035,
-  defaultFuel: 0.85,
   defaultThreshold: 0.42,
   defaultPropensity: 0.35,
   defaultCoupling: 0.65,
@@ -66,6 +64,8 @@ export const DEFAULT_PARAMETERS: WorldParameters = {
   ticksPerSecond: 24,
   maxHistory: 240
 };
+
+export const INITIAL_FUEL_MAX = 0.5;
 
 const MAX_SEED = 0xffff_ffff;
 const EPSILON = 1e-12;
@@ -98,12 +98,15 @@ export function createRandomSeed(): number {
   return Math.floor(Math.random() * MAX_SEED);
 }
 
-export function createWorld(parameters: WorldParameters): WorldState {
+export function createWorld(
+  parameters: WorldParameters,
+  random: RandomSource = Math.random
+): WorldState {
   const width = normalizeDimension(parameters.width);
   const height = normalizeDimension(parameters.height);
   const totalAgents = width * height;
   const agents = Array.from({ length: totalAgents }, () =>
-    createAgentFromDefaults(parameters)
+    createAgentFromDefaults(parameters, random)
   );
   const stats = summarize(agents, 0, {
     triggered: false,
@@ -133,7 +136,7 @@ export function stepWorld(
   const agents = world.agents.slice(0, totalAgents).map(cloneAgent);
 
   while (agents.length < totalAgents) {
-    agents.push(createAgentFromDefaults(parameters));
+    agents.push(createAgentFromDefaults(parameters, random));
   }
 
   const previousActive = agents.map((agent) => agent.active);
@@ -168,9 +171,12 @@ export function stepWorld(
   };
 }
 
-function createAgentFromDefaults(parameters: WorldParameters): Agent {
+function createAgentFromDefaults(
+  parameters: WorldParameters,
+  random: RandomSource
+): Agent {
   return {
-    fuel: clamp01(parameters.defaultFuel),
+    fuel: clamp01(random()) * INITIAL_FUEL_MAX,
     threshold: clamp01(parameters.defaultThreshold),
     propensity: clamp01(parameters.defaultPropensity),
     coupling: clamp01(parameters.defaultCoupling),

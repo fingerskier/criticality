@@ -23,7 +23,6 @@ const baseParameters: WorldParameters = {
   triggerMagnitude: 0,
   dissipationRate: 0,
   conversionRate: 0,
-  defaultFuel: 0.5,
   defaultThreshold: 0.5,
   defaultPropensity: 1,
   defaultCoupling: 1,
@@ -53,13 +52,19 @@ describe("criticality simulation", () => {
     expect(clamp01(1.2)).toBe(1);
   });
 
-  it("creates a rectangular world filled with the configured agent defaults", () => {
-    const world = createWorld(baseParameters);
+  it("creates a rectangular world with random initial fuel levels from 0 to 0.5", () => {
+    const world = createWorld(
+      baseParameters,
+      sequence([0, 0.25, 0.5, 0.75, 1], 0.2)
+    );
 
     expect(world.width).toBe(3);
     expect(world.height).toBe(3);
     expect(world.agents).toHaveLength(9);
-    expect(world.agents.every((agent) => agent.fuel === 0.5)).toBe(true);
+    expect(world.agents.slice(0, 5).map((agent) => agent.fuel)).toEqual([
+      0, 0.125, 0.25, 0.375, 0.5
+    ]);
+    expect(world.agents.every((agent) => agent.fuel >= 0 && agent.fuel <= 0.5)).toBe(true);
     expect(world.agents.every((agent) => agent.energy === 0)).toBe(true);
     expect(world.agents.every((agent) => agent.active === false)).toBe(true);
     expect(world.history[0]).toMatchObject({ tick: 0, activeCount: 0 });
