@@ -43,3 +43,8 @@ World:
       5. Iterate to 3 until close enough
       6. Iterate to 2 to train variants
       7. Iterate to 1 to train diff corpii
+    * Example
+      * Say each number from 0-1 represents an English word
+      * We could pre-load the entire network with fuel corresponding to some corpus of information
+      * Inject a "prompt" phrase into a subset of input cells
+      * The values of the output cells can be decoded into a phrase
