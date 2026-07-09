@@ -48,3 +48,5 @@ World:
       * We could pre-load the entire network with fuel corresponding to some corpus of information
       * Inject a "prompt" phrase into a subset of input cells
       * The values of the output cells can be decoded into a phrase
+    * Expectation
+      * The World graph attains _zones_ corresponding to different cognitive activities much like the brain has different sensual and reasoning segments
