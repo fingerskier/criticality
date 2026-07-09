@@ -39,7 +39,7 @@ World:
       1. Load fuel
       2. Inject heat at specific "input" cells
       3. Read heat at specific "output" cells
-      4. Update intermediate cells (those near the direct path between in/out cells) to push the output temperature toward expected values
+      4. Update intermediate cells (those on the direct paths between in/out cells) to push the output temperature toward expected values
       5. Iterate to 3 until close enough
       6. Iterate to 2 to train variants
       7. Iterate to 1 to train diff corpii
