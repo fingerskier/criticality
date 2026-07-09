@@ -5,18 +5,41 @@ Cell:
   # fixed parameters
   fuel:                # heat-energy source amount
   combustion_point:    # minimum temperature for combustion
-  quench_point:        # maximum temperature at which it can burn
+  conductivity:        # fraction of heat transferred to neighbors
 
   # computed parameters
-  combustion_probability:  # probability of combustion based on temperature and resistance and combustion_point
-  temperature:             # heat build-up
-  activation:              # is hot enough to convert fuel -> heat;  emits excess heat
+  activation:              # fuel -> heat  conversion
+  temperature:             # heat build-up;  dTemp = activation * temperature
 ```
 * activation
-  * temperature > combustion_point -> activation rises
-  * temperature < quench_point -> activatino lowers
-* exhausted heat ~= temperature * activation
+  * temperature > combustion_point
+    * activation rises
+  * temperature < combustion_point
+    * activation lowers
+  * effects
+    * temperature += activation * temperature 
+    * fuel -= activation * temparture
+* exhausted heat
+  * each neighbor gets  dTemp = 1/8 * temperature * conductivity
 
 World:
-  Cells don't refuel themselves, fuel gets added externally
-
+  * Fuel
+    * fuel gets added externally
+    * like an initialization state;  similar to context but throughout the model
+  * Temperature
+    * communication between cells via heat
+  * Training
+    * Input
+      * Cell fuel levels
+      * External heating of cells
+    * Outputs
+      * Primarily reading cell temperatures
+      * Secondarily reading cell fuel-levels
+    * Process
+      1. Load fuel
+      2. Inject heat at specific "input" cells
+      3. Read heat at specific "output" cells
+      4. Update intermediate cells (those near the direct path between in/out cells) to push the output temperature toward expected values
+      5. Iterate to 3 until close enough
+      6. Iterate to 2 to train variants
+      7. Iterate to 1 to train diff corpii
