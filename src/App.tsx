@@ -5,6 +5,7 @@ import {
   createRandomSeed,
   createSeededRandom,
   createWorld,
+  reconfigureWorld,
   stepWorld,
   type Agent,
   type HistorySample,
@@ -12,6 +13,7 @@ import {
   type WorldParameters,
   type WorldState
 } from "./simulation/criticality";
+import { PRESETS } from "./simulation/presets";
 import {
   deleteSavedParameterSet,
   loadCurrentSettings,
@@ -22,6 +24,9 @@ import {
   type SavedParameterSet
 } from "./storage/settings";
 
+const REPOSITORY_URL = "https://github.com/fingerskier/criticality";
+const MAX_SEED = 0xffff_ffff;
+
 type ParameterKey = keyof WorldParameters;
 
 interface ControlDefinition {
@@ -31,27 +36,7 @@ interface ControlDefinition {
   max: number;
   step: number;
   helper: string;
-  format?: (value: number) => string;
 }
-
-const GRID_CONTROLS: ControlDefinition[] = [
-  {
-    key: "width",
-    label: "Width",
-    min: 32,
-    max: 256,
-    step: 1,
-    helper: "Agents across the canvas. Reset rebuilds the grid."
-  },
-  {
-    key: "height",
-    label: "Height",
-    min: 24,
-    max: 192,
-    step: 1,
-    helper: "Agents down the canvas. Reset rebuilds the grid."
-  }
-];
 
 const WORLD_CONTROLS: ControlDefinition[] = [
   {
@@ -60,8 +45,7 @@ const WORLD_CONTROLS: ControlDefinition[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    helper: "Probability that a random external excitation occurs each step.",
-    format: formatPercent
+    helper: "Probability that a random external excitation starts each step."
   },
   {
     key: "triggerMagnitude",
@@ -69,8 +53,7 @@ const WORLD_CONTROLS: ControlDefinition[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    helper: "Maximum energy added by a trigger; the actual spike is random.",
-    format: formatDecimal
+    helper: "Maximum energy a trigger adds per step; the actual spike is random."
   },
   {
     key: "quiescence",
@@ -78,17 +61,15 @@ const WORLD_CONTROLS: ControlDefinition[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    helper: "Reduces new trigger frequency as average energy rises.",
-    format: formatPercent
+    helper: "Suppresses new triggers as average energy rises."
   },
   {
     key: "dissipationRate",
     label: "Dissipation",
     min: 0,
     max: 1,
-    step: 0.01,
-    helper: "Fraction of each agent's energy lost to the environment each step.",
-    format: formatPercent
+    step: 0.001,
+    helper: "Fraction of each agent's energy lost to the environment each step."
   },
   {
     key: "conversionRate",
@@ -96,16 +77,7 @@ const WORLD_CONTROLS: ControlDefinition[] = [
     min: 0,
     max: 1,
     step: 0.005,
-    helper: "Fuel that an active agent can convert into energy each step.",
-    format: formatDecimal
-  },
-  {
-    key: "ticksPerSecond",
-    label: "Speed",
-    min: 1,
-    max: 60,
-    step: 1,
-    helper: "Simulation steps per second while Auto is running."
+    helper: "Fuel an active agent converts into energy each step."
   }
 ];
 
@@ -116,26 +88,23 @@ const AGENT_CONTROLS: ControlDefinition[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    helper: "Energy level above which activation can occur.",
-    format: formatDecimal
+    helper: "Energy above which an agent may activate."
   },
   {
     key: "defaultActivationProbability",
-    label: "Activation probability",
+    label: "Activation prob.",
     min: 0,
     max: 1,
     step: 0.01,
-    helper: "Chance that an energized agent activates above its threshold.",
-    format: formatDecimal
+    helper: "Chance an agent above its threshold activates each step."
   },
   {
     key: "defaultDeactivationProbability",
-    label: "Deactivation probability",
+    label: "Deactivation prob.",
     min: 0,
     max: 1,
     step: 0.01,
-    helper: "Chance that an active agent deactivates below its threshold.",
-    format: formatDecimal
+    helper: "Chance an active agent below its threshold deactivates each step."
   },
   {
     key: "defaultResistance",
@@ -143,8 +112,7 @@ const AGENT_CONTROLS: ControlDefinition[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    helper: "Fraction of neighboring excess energy resisted instead of absorbed.",
-    format: formatDecimal
+    helper: "Fraction of a neighbor's excess energy resisted instead of absorbed."
   },
   {
     key: "defaultVigor",
@@ -152,8 +120,7 @@ const AGENT_CONTROLS: ControlDefinition[] = [
     min: 0,
     max: 0.1,
     step: 0.001,
-    helper: "Fuel recovered by inactive agents each step.",
-    format: formatSmallDecimal
+    helper: "Fuel an inactive agent recovers each step."
   },
   {
     key: "variability",
@@ -161,16 +128,42 @@ const AGENT_CONTROLS: ControlDefinition[] = [
     min: 0,
     max: 0.5,
     step: 0.01,
-    helper: "Random +/- spread applied to each agent default on reset.",
-    format: formatDecimal
+    helper: "Random ± spread of each agent's properties around the defaults."
+  }
+];
+
+const GRID_CONTROLS: ControlDefinition[] = [
+  {
+    key: "width",
+    label: "Width",
+    min: 32,
+    max: 256,
+    step: 1,
+    helper: "Agents across. Resizes the live grid; existing agents keep their place."
+  },
+  {
+    key: "height",
+    label: "Height",
+    min: 24,
+    max: 192,
+    step: 1,
+    helper: "Agents down. Resizes the live grid; existing agents keep their place."
+  },
+  {
+    key: "ticksPerSecond",
+    label: "Speed",
+    min: 1,
+    max: 60,
+    step: 1,
+    helper: "Simulation steps per second while running."
   },
   {
     key: "maxHistory",
-    label: "History length",
+    label: "History",
     min: 30,
     max: 600,
     step: 10,
-    helper: "Number of samples retained in the charts."
+    helper: "Samples retained in the charts."
   }
 ];
 
@@ -187,6 +180,23 @@ const COOL_RAMP: [Rgb, Rgb, Rgb] = [
 ];
 
 type Rgb = readonly [number, number, number];
+
+interface Scenario {
+  value: string;
+  name: string;
+  description: string;
+  seed: number;
+  parameters: WorldParameters;
+  savedId?: string;
+}
+
+const PRESET_SCENARIOS: Scenario[] = PRESETS.map((preset) => ({
+  value: `preset:${preset.id}`,
+  name: preset.name,
+  description: preset.description,
+  seed: preset.seed,
+  parameters: preset.parameters
+}));
 
 export function App() {
   const initialSettingsRef = useRef<AppSettings | null>(null);
@@ -207,32 +217,17 @@ export function App() {
   const [savedSets, setSavedSets] = useState<SavedParameterSet[]>(() =>
     loadSavedParameterSets()
   );
-  const [selectedSetId, setSelectedSetId] = useState("");
-  const [parameterSetName, setParameterSetName] = useState("");
+  const [saveName, setSaveName] = useState("");
+  // The scenario the user explicitly picked or just saved. Settings alone
+  // can't identify it: a saved copy of a preset (or two identical saved
+  // setups) matches several entries, and the first match would win.
+  const [selectedValue, setSelectedValue] = useState("");
   const [storageStatus, setStorageStatus] = useState("");
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
-    parametersRef.current = parameters;
-  }, [parameters]);
-
-  useEffect(() => {
     saveCurrentSettings({ parameters, seed });
   }, [parameters, seed]);
-
-  useEffect(() => {
-    if (savedSets.length === 0) {
-      if (selectedSetId) {
-        setSelectedSetId("");
-      }
-
-      return;
-    }
-
-    if (!savedSets.some((set) => set.id === selectedSetId)) {
-      setSelectedSetId(savedSets[0]?.id ?? "");
-    }
-  }, [savedSets, selectedSetId]);
 
   useEffect(() => {
     drawWorld(canvasRef.current, world);
@@ -250,93 +245,144 @@ export function App() {
     return () => window.clearInterval(interval);
   }, [running, parameters.ticksPerSecond]);
 
+  // Every setting applies to the live world at once; nothing waits for Reset.
   const updateParameter = useCallback((key: ParameterKey, value: number) => {
-    setParameters((current) => ({
-      ...current,
-      [key]: normalizeControlValue(key, value)
-    }));
+    const previous = parametersRef.current;
+    const next = { ...previous, [key]: normalizeControlValue(key, value) };
+
+    if (next[key] === previous[key]) {
+      return;
+    }
+
+    parametersRef.current = next;
+    setParameters(next);
+    setWorld((current) => reconfigureWorld(current, previous, next, randomRef.current));
   }, []);
+
+  const rebuildWorld = useCallback((nextSeed: number, nextParameters: WorldParameters) => {
+    randomRef.current = createSeededRandom(nextSeed);
+    setWorld(createWorld(nextParameters, randomRef.current));
+  }, []);
+
+  const applySettings = useCallback(
+    (settings: AppSettings) => {
+      parametersRef.current = settings.parameters;
+      setParameters(settings.parameters);
+      setSeed(settings.seed);
+      rebuildWorld(settings.seed, settings.parameters);
+    },
+    [rebuildWorld]
+  );
+
+  const applySeed = useCallback(
+    (nextSeed: number) => {
+      setSeed(nextSeed);
+      rebuildWorld(nextSeed, parametersRef.current);
+    },
+    [rebuildWorld]
+  );
 
   const step = useCallback(() => {
     setWorld((current) => stepWorld(current, parametersRef.current, randomRef.current));
   }, []);
 
-  const reset = useCallback(() => {
-    randomRef.current = createSeededRandom(seed);
-    setWorld(createWorld(parametersRef.current, randomRef.current));
-  }, [seed]);
+  const reset = useCallback(() => rebuildWorld(seed, parametersRef.current), [rebuildWorld, seed]);
 
-  const randomizeSeed = useCallback(() => {
-    const nextSeed = createRandomSeed();
-    setSeed(nextSeed);
-    randomRef.current = createSeededRandom(nextSeed);
-    setWorld(createWorld(parametersRef.current, randomRef.current));
-  }, []);
+  const scenarios = useMemo<Scenario[]>(
+    () => [
+      ...PRESET_SCENARIOS,
+      ...savedSets.map((set) => ({
+        value: `saved:${set.id}`,
+        name: set.name,
+        description: `Saved ${new Date(set.updatedAt).toLocaleString()}.`,
+        seed: set.seed,
+        parameters: set.parameters,
+        savedId: set.id
+      }))
+    ],
+    [savedSets]
+  );
 
-  const saveNamedSet = useCallback(() => {
+  const matchesCurrent = (scenario: Scenario) =>
+    scenario.seed === seed && sameParameters(scenario.parameters, parameters);
+  const activeScenario =
+    scenarios.find((scenario) => scenario.value === selectedValue && matchesCurrent(scenario)) ??
+    scenarios.find(matchesCurrent);
+
+  const selectScenario = useCallback(
+    (value: string) => {
+      const scenario = scenarios.find((candidate) => candidate.value === value);
+
+      if (scenario) {
+        setSelectedValue(scenario.value);
+        applySettings({ parameters: scenario.parameters, seed: scenario.seed });
+        setStorageStatus("");
+      }
+    },
+    [applySettings, scenarios]
+  );
+
+  const saveScenario = useCallback(() => {
     const saved = saveParameterSet({
-      name: parameterSetName,
+      name: saveName,
       parameters,
       seed,
       history: world.history
     });
 
     if (!saved) {
-      setStorageStatus("Unable to save this set.");
+      setStorageStatus("Unable to save this setup.");
       return;
     }
 
     setSavedSets(loadSavedParameterSets());
-    setSelectedSetId(saved.id);
-    setParameterSetName(saved.name);
+    setSelectedValue(`saved:${saved.id}`);
+    setSaveName("");
     setStorageStatus(`Saved "${saved.name}".`);
-  }, [parameterSetName, parameters, seed, world.history]);
+  }, [saveName, parameters, seed, world.history]);
 
-  const loadNamedSet = useCallback(() => {
-    const saved = savedSets.find((set) => set.id === selectedSetId);
-
-    if (!saved) {
-      setStorageStatus("Choose a saved set first.");
+  const deleteScenario = useCallback(() => {
+    if (!activeScenario?.savedId) {
       return;
     }
 
-    setRunning(false);
-    setParameters(saved.parameters);
-    parametersRef.current = saved.parameters;
-    setSeed(saved.seed);
-    randomRef.current = createSeededRandom(saved.seed);
-    setWorld(createWorld(saved.parameters, randomRef.current));
-    saveCurrentSettings({ parameters: saved.parameters, seed: saved.seed });
-    setParameterSetName(saved.name);
-    setStorageStatus(`Loaded "${saved.name}".`);
-  }, [savedSets, selectedSetId]);
-
-  const deleteNamedSet = useCallback(() => {
-    const saved = savedSets.find((set) => set.id === selectedSetId);
-
-    if (!saved) {
-      setStorageStatus("Choose a saved set first.");
-      return;
-    }
-
-    const nextSets = deleteSavedParameterSet(saved.id);
-    setSavedSets(nextSets);
-    setSelectedSetId(nextSets[0]?.id ?? "");
-    setStorageStatus(`Deleted "${saved.name}".`);
-  }, [savedSets, selectedSetId]);
+    setSavedSets(deleteSavedParameterSet(activeScenario.savedId));
+    setStorageStatus(`Deleted "${activeScenario.name}".`);
+  }, [activeScenario]);
 
   const displayStats = useMemo(() => makeDisplayStats(world), [world]);
 
   return (
-    <main className="app-shell">
-      <section className="hero" aria-label="Self-organizing criticality">
-        <div>
-          <p className="eyebrow">Self-organizing criticality</p>
+    <div className="app-shell">
+      <GitHubCorner />
+      <header className="topbar">
+        <div className="brand">
+          <h1>Criticality</h1>
+          <p>Self-organizing critical system</p>
         </div>
-      </section>
+        <div className="runner" role="group" aria-label="World runner controls">
+          <button
+            className="primary-button"
+            type="button"
+            onClick={() => setRunning((current) => !current)}
+          >
+            {running ? "Pause" : "Run"}
+          </button>
+          <button type="button" onClick={step} disabled={running}>
+            Step
+          </button>
+          <button type="button" onClick={reset} title="Rebuild the world from the current seed">
+            Reset
+          </button>
+        </div>
+        <div className="legend" aria-label="Color legend">
+          <span><i className="legend-swatch cool" />Inactive · fuel</span>
+          <span><i className="legend-swatch heat" />Active · energy</span>
+        </div>
+      </header>
 
-      <section className="dashboard">
-        <div className="simulation-panel">
+      <main className="dashboard">
+        <section className="simulation-panel" aria-label="Simulation">
           <div className="canvas-frame">
             <canvas
               ref={canvasRef}
@@ -345,18 +391,14 @@ export function App() {
               aria-label="Agent grid visualization"
             />
           </div>
-          <div className="legend" aria-label="Color legend">
-            <span><i className="legend-swatch cool" />Inactive: indigo → blue → green by fuel</span>
-            <span><i className="legend-swatch heat" />Active: yellow → orange → red by energy</span>
-          </div>
-          <div className="stats-grid" aria-label="Current simulation statistics">
+          <dl className="stats-strip" aria-label="Current simulation statistics">
             {displayStats.map((stat) => (
-              <article className="stat-card" key={stat.label}>
-                <span>{stat.label}</span>
-                <strong>{stat.value}</strong>
-              </article>
+              <div className={`stat ${stat.className ?? ""}`} key={stat.label}>
+                <dt>{stat.label}</dt>
+                <dd>{stat.value}</dd>
+              </div>
             ))}
-          </div>
+          </dl>
           <div className="charts" aria-label="Time-series charts">
             <MiniChart
               label="Active ratio"
@@ -377,70 +419,113 @@ export function App() {
               color="#22c55e"
             />
           </div>
-        </div>
+        </section>
 
         <aside className="control-panel" aria-label="Simulation parameters">
-          <div className="runner-card" aria-label="World runner controls">
-            <button
-              className="primary-button"
-              type="button"
-              onClick={() => setRunning((current) => !current)}
+          <section className="control-group span-all scenario">
+            <div className="scenario-row">
+              <label className="field scenario-select">
+                <span>Scenario</span>
+                <select
+                  value={activeScenario?.value ?? ""}
+                  onChange={(event) => selectScenario(event.target.value)}
+                >
+                  <option value="" disabled>
+                    Custom
+                  </option>
+                  <optgroup label="Presets">
+                    {PRESET_SCENARIOS.map((scenario) => (
+                      <option key={scenario.value} value={scenario.value}>
+                        {scenario.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                  {savedSets.length > 0 ? (
+                    <optgroup label="Saved">
+                      {scenarios
+                        .filter((scenario) => scenario.savedId)
+                        .map((scenario) => (
+                          <option key={scenario.value} value={scenario.value}>
+                            {scenario.name}
+                          </option>
+                        ))}
+                    </optgroup>
+                  ) : null}
+                </select>
+              </label>
+              <label className="field seed-field">
+                <span>Seed</span>
+                <NumberField
+                  label="Seed"
+                  min={0}
+                  max={MAX_SEED}
+                  step={1}
+                  value={seed}
+                  onCommit={(value) => applySeed(Math.round(value))}
+                />
+              </label>
+              <button
+                type="button"
+                                onClick={() => applySeed(createRandomSeed())}
+                title="New random seed"
+              >
+                Reroll
+              </button>
+            </div>
+            <p className="scenario-note" aria-live="polite">
+              {storageStatus ||
+                activeScenario?.description ||
+                "Custom settings. Name and save them to keep them."}
+            </p>
+            <form
+              className="save-row"
+              onSubmit={(event) => {
+                event.preventDefault();
+                saveScenario();
+              }}
             >
-              {running ? "Pause Auto" : "Start Auto"}
-            </button>
-            <button type="button" onClick={step}>
-              Step
-            </button>
-            <button type="button" onClick={reset}>
-              Reset
-            </button>
-            <button type="button" onClick={randomizeSeed}>
-              New seed
-            </button>
-            <label className="seed-input">
-              Seed
               <input
-                type="number"
-                value={seed}
-                onChange={(event) => setSeed(Number(event.target.value) || 0)}
+                type="text"
+                value={saveName}
+                placeholder="Name this setup…"
+                aria-label="Saved setup name"
+                onChange={(event) => setSaveName(event.target.value)}
               />
-            </label>
-          </div>
-          <SavedSetsControl
-            name={parameterSetName}
-            savedSets={savedSets}
-            selectedSetId={selectedSetId}
-            status={storageStatus}
-            onDelete={deleteNamedSet}
-            onLoad={loadNamedSet}
-            onNameChange={setParameterSetName}
-            onSave={saveNamedSet}
-            onSelectSet={setSelectedSetId}
-          />
+              <button type="submit" disabled={saveName.trim().length === 0}>
+                Save
+              </button>
+              <button
+                type="button"
+                onClick={deleteScenario}
+                disabled={!activeScenario?.savedId}
+                title="Delete the selected saved setup"
+              >
+                Delete
+              </button>
+            </form>
+          </section>
           <ControlGroup
-            title="Grid"
-            description="Dimensions take effect when the world is reset."
-            controls={GRID_CONTROLS}
-            parameters={parameters}
-            onChange={updateParameter}
-          />
-          <ControlGroup
-            title="World variables"
-            description="Applied immediately on the next simulation step."
+            title="World"
             controls={WORLD_CONTROLS}
             parameters={parameters}
             onChange={updateParameter}
           />
           <ControlGroup
-            title="Agent defaults"
-            description="Fuel is randomized from 0 to 0.5 on reset; these defaults are copied into each agent."
+            title="Agents"
             controls={AGENT_CONTROLS}
             parameters={parameters}
             onChange={updateParameter}
           />
+          <ControlGroup
+            className="span-all grid-and-time"
+            title="Grid & time"
+            controls={GRID_CONTROLS}
+            parameters={parameters}
+            onChange={updateParameter}
+          />
         </aside>
-      </section>
-    </main>
+      </main>
+    </div>
   );
 }
 
@@ -451,103 +536,58 @@ function createInitialSettings(): AppSettings {
   };
 }
 
-function SavedSetsControl({
-  name,
-  savedSets,
-  selectedSetId,
-  status,
-  onDelete,
-  onLoad,
-  onNameChange,
-  onSave,
-  onSelectSet
-}: {
-  name: string;
-  savedSets: SavedParameterSet[];
-  selectedSetId: string;
-  status: string;
-  onDelete: () => void;
-  onLoad: () => void;
-  onNameChange: (value: string) => void;
-  onSave: () => void;
-  onSelectSet: (id: string) => void;
-}) {
-  const canSave = name.trim().length > 0;
-  const hasSelectedSet = savedSets.some((set) => set.id === selectedSetId);
-
+function GitHubCorner() {
+  // Octocat corner after tholman/github-corners (MIT).
   return (
-    <section className="control-group saved-sets">
-      <div>
-        <h2>Saved sets</h2>
-      </div>
-      <label className="saved-set-field">
-        Name
-        <input
-          type="text"
-          value={name}
-          onChange={(event) => onNameChange(event.target.value)}
+    <a
+      className="github-corner"
+      href={REPOSITORY_URL}
+      target="_blank"
+      rel="noreferrer"
+      aria-label="View source on GitHub"
+      title="View source on GitHub"
+    >
+      <svg viewBox="0 0 250 250" aria-hidden="true">
+        <path d="M0,0 L115,115 L130,115 L142,142 L250,250 L250,0 Z" className="octo-flag" />
+        <path
+          className="octo-arm"
+          d="M128.3,109.0 C113.8,99.7 119.0,89.6 119.0,89.6 C122.0,82.7 120.5,78.6 120.5,78.6 C119.2,72.0 123.4,76.3 123.4,76.3 C127.3,80.9 125.5,87.3 125.5,87.3 C122.9,97.6 130.6,101.9 134.4,103.2"
         />
-      </label>
-      <label className="saved-set-field">
-        Saved
-        <select
-          value={selectedSetId}
-          onChange={(event) => onSelectSet(event.target.value)}
-          disabled={savedSets.length === 0}
-        >
-          <option value="">No saved sets</option>
-          {savedSets.map((set) => (
-            <option key={set.id} value={set.id}>
-              {set.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <div className="saved-set-actions">
-        <button type="button" onClick={onSave} disabled={!canSave}>
-          Save
-        </button>
-        <button type="button" onClick={onLoad} disabled={!hasSelectedSet}>
-          Load
-        </button>
-        <button type="button" onClick={onDelete} disabled={!hasSelectedSet}>
-          Delete
-        </button>
-      </div>
-      <p className="saved-set-status" aria-live="polite">
-        {status}
-      </p>
-    </section>
+        <path
+          className="octo-body"
+          d="M115.0,115.0 C114.9,115.1 118.7,116.5 119.8,115.4 L133.7,101.6 C136.9,99.2 139.9,98.4 142.2,98.6 C133.8,88.0 127.5,74.4 143.8,58.0 C148.5,53.4 154.0,51.2 159.7,51.0 C160.3,49.4 163.2,43.6 171.4,40.1 C171.4,40.1 176.1,42.5 178.8,56.2 C183.1,58.6 187.2,61.8 190.9,65.4 C194.5,69.0 197.7,73.2 200.1,77.6 C213.8,80.2 216.3,84.9 216.3,84.9 C212.7,93.1 206.9,96.0 205.4,96.6 C205.1,102.4 203.0,107.8 198.3,112.5 C181.9,128.9 168.3,122.5 157.7,114.1 C157.9,116.9 156.7,120.9 152.7,124.9 L141.0,136.5 C139.8,137.7 141.6,141.9 141.8,141.8 Z"
+        />
+      </svg>
+    </a>
   );
 }
 
 function ControlGroup({
   title,
-  description,
   controls,
   parameters,
-  onChange
+  onChange,
+  className = ""
 }: {
   title: string;
-  description: string;
   controls: ControlDefinition[];
   parameters: WorldParameters;
   onChange: (key: ParameterKey, value: number) => void;
+  className?: string;
 }) {
   return (
-    <section className="control-group">
-      <div>
-        <h2>{title}</h2>
-        <p>{description}</p>
+    <section className={`control-group ${className}`}>
+      <h2>{title}</h2>
+      <div className="control-list">
+        {controls.map((control) => (
+          <ParameterControl
+            control={control}
+            key={control.key}
+            value={parameters[control.key]}
+            onChange={onChange}
+          />
+        ))}
       </div>
-      {controls.map((control) => (
-        <ParameterControl
-          control={control}
-          key={control.key}
-          value={parameters[control.key]}
-          onChange={onChange}
-        />
-      ))}
     </section>
   );
 }
@@ -561,34 +601,93 @@ function ParameterControl({
   value: number;
   onChange: (key: ParameterKey, value: number) => void;
 }) {
-  const formatted = control.format?.(value) ?? String(Math.round(value * 1000) / 1000);
-
   return (
-    <label className="parameter-control">
-      <span className="control-heading">
+    <div className="parameter-control" title={control.helper}>
+      <div className="control-heading">
         <span>{control.label}</span>
-        <output>{formatted}</output>
-      </span>
-      <span className="control-inputs">
-        <input
-          type="range"
+        <NumberField
+          label={control.label}
           min={control.min}
           max={control.max}
           step={control.step}
           value={value}
-          onChange={(event) => onChange(control.key, Number(event.target.value))}
+          onCommit={(next) => onChange(control.key, next)}
         />
-        <input
-          type="number"
-          min={control.min}
-          max={control.max}
-          step={control.step}
-          value={roundForInput(value)}
-          onChange={(event) => onChange(control.key, Number(event.target.value))}
-        />
-      </span>
-      <small>{control.helper}</small>
-    </label>
+      </div>
+      <input
+        type="range"
+        aria-label={control.label}
+        min={control.min}
+        max={control.max}
+        step={control.step}
+        value={value}
+        onChange={(event) => onChange(control.key, Number(event.target.value))}
+      />
+    </div>
+  );
+}
+
+/**
+ * Numeric input that applies as you type, but only once the text is an
+ * in-range number: typing "200" into a 32-256 field must not resize the grid
+ * to 2 and then 20 on the way. Out-of-range text is clamped on blur or Enter.
+ */
+function NumberField({
+  label,
+  min,
+  max,
+  step,
+  value,
+  onCommit
+}: {
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+  value: number;
+  onCommit: (value: number) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+
+  const commit = (raw: string, final: boolean) => {
+    const parsed = raw.trim() === "" ? Number.NaN : Number(raw);
+    const inRange = Number.isFinite(parsed) && parsed >= min && parsed <= max;
+    const next = inRange || !final ? parsed : Math.min(max, Math.max(min, parsed));
+
+    // Only real edits commit: re-committing the shown (rounded) value would
+    // nudge precise values and, for the seed, needlessly rebuild the world.
+    if (Number.isFinite(next) && (inRange || final) && next !== roundForInput(value)) {
+      onCommit(next);
+    }
+
+    if (final) {
+      setDraft(null);
+    }
+  };
+
+  return (
+    <input
+      type="number"
+      aria-label={`${label} value`}
+      min={min}
+      max={max}
+      step={step}
+      value={draft ?? String(roundForInput(value))}
+      onChange={(event) => {
+        setDraft(event.target.value);
+        commit(event.target.value, false);
+      }}
+      onBlur={() => {
+        if (draft !== null) {
+          commit(draft, true);
+        }
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" && draft !== null) {
+          commit(draft, true);
+        }
+      }}
+    />
   );
 }
 
@@ -619,8 +718,14 @@ function MiniChart({
         <span>{label}</span>
         <strong>{latestValue}</strong>
       </figcaption>
-      <svg viewBox="0 0 100 36" role="img" aria-label={`${label} history`}>
-        <polyline points={points} fill="none" stroke={color} strokeWidth="2" />
+      <svg viewBox="0 0 100 36" preserveAspectRatio="none" role="img" aria-label={`${label} history`}>
+        <polyline
+          points={points}
+          fill="none"
+          stroke={color}
+          strokeWidth="2"
+          vectorEffect="non-scaling-stroke"
+        />
       </svg>
     </figure>
   );
@@ -686,23 +791,34 @@ function mix(start: Rgb, end: Rgb, amount: number): Rgb {
   ];
 }
 
-function makeDisplayStats(world: WorldState): Array<{ label: string; value: string }> {
+function makeDisplayStats(
+  world: WorldState
+): Array<{ label: string; value: string; className?: string }> {
   return [
     { label: "Tick", value: String(world.stats.tick) },
-    { label: "Active", value: `${world.stats.activeCount} (${formatPercent(world.stats.activeRatio)})` },
-    { label: "Avg energy", value: formatDecimal(world.stats.averageEnergy) },
-    { label: "Avg fuel", value: formatDecimal(world.stats.averageFuel) },
+    {
+      label: "Active",
+      className: "medium",
+      value: `${world.stats.activeCount} (${formatPercent(world.stats.activeRatio)})`
+    },
     { label: "Avalanche", value: String(world.stats.avalanche) },
-    { label: "Trigger inputs", value: String(world.stats.activeTriggerCount) },
+    { label: "Triggers", value: String(world.stats.activeTriggerCount) },
     {
       label: "Last trigger",
+      className: "wide",
       value: world.stats.triggered
         ? `#${world.stats.triggeredIndex ?? "?"} +${formatDecimal(world.stats.triggeredEnergy)}${
-            world.stats.triggeredDuration > 0 ? ` x${world.stats.triggeredDuration}` : ""
+            world.stats.triggeredDuration > 0 ? ` ×${world.stats.triggeredDuration}` : ""
           }`
         : "none"
     }
   ];
+}
+
+function sameParameters(left: WorldParameters, right: WorldParameters): boolean {
+  return (Object.keys(DEFAULT_PARAMETERS) as ParameterKey[]).every(
+    (key) => Math.abs(left[key] - right[key]) < 1e-9
+  );
 }
 
 function normalizeControlValue(key: ParameterKey, value: number): number {
@@ -727,8 +843,4 @@ function formatPercent(value: number): string {
 
 function formatDecimal(value: number): string {
   return clamp01(value).toFixed(2);
-}
-
-function formatSmallDecimal(value: number): string {
-  return clamp01(value).toFixed(3);
 }
