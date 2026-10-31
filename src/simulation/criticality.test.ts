@@ -4,6 +4,7 @@ import {
   clamp01,
   createSeededRandom,
   createWorld,
+  reconfigureWorld,
   stepWorld,
   type Agent,
   type RandomSource,
@@ -365,6 +366,116 @@ describe("criticality simulation", () => {
     expect(agentAt(world, 0).fuel).toBe(1);
     expect(world.history).toHaveLength(2);
     expect(world.history.map((entry) => entry.tick)).toEqual([1, 2]);
+  });
+
+  it("re-applies changed agent defaults to live agents without a reset", () => {
+    const params = {
+      ...baseParameters,
+      width: 1,
+      height: 1,
+      defaultThreshold: 0.5,
+      defaultResistance: 0.5,
+      variability: 0.2
+    };
+    const world = createWorld(params, sequence([0.5, 0.75, 0.5, 0.5, 0, 0.5]));
+    replaceAgent(world, 0, { energy: 0.3, active: true });
+
+    const next = reconfigureWorld(
+      world,
+      params,
+      { ...params, defaultThreshold: 0.25, defaultResistance: 0.8 },
+      sequence([], 0.5)
+    );
+    const agent = agentAt(next, 0);
+
+    // Stored variation factors survive: threshold +10%, resistance -20%.
+    expect(agent.threshold).toBeCloseTo(0.275);
+    expect(agent.resistance).toBeCloseTo(0.64);
+    // Dynamic state is untouched.
+    expect(agent.energy).toBe(0.3);
+    expect(agent.active).toBe(true);
+    expect(agent.fuel).toBeCloseTo(0.25);
+    // The previous world is not mutated.
+    expect(agentAt(world, 0).threshold).toBeCloseTo(0.55);
+  });
+
+  it("re-spreads live agents when variability changes, and restores them exactly", () => {
+    const params = { ...baseParameters, width: 1, height: 1, defaultThreshold: 0.5, variability: 0.2 };
+    const world = createWorld(params, sequence([0.5, 1, 0.5, 0.5, 0.5, 0.5]));
+    const random = sequence([], 0.5);
+
+    const wide = reconfigureWorld(world, params, { ...params, variability: 0.4 }, random);
+    const flat = reconfigureWorld(wide, { ...params, variability: 0.4 }, { ...params, variability: 0 }, random);
+    const back = reconfigureWorld(flat, { ...params, variability: 0 }, params, random);
+
+    expect(agentAt(world, 0).threshold).toBeCloseTo(0.6);
+    expect(agentAt(wide, 0).threshold).toBeCloseTo(0.7);
+    expect(agentAt(flat, 0).threshold).toBe(0.5);
+    expect(agentAt(back, 0).threshold).toBeCloseTo(0.6);
+  });
+
+  it("draws variation lazily when variability is raised from zero on a live world", () => {
+    const params = {
+      ...baseParameters,
+      width: 1,
+      height: 1,
+      defaultThreshold: 0.5,
+      defaultResistance: 0.5
+    };
+    const world = createWorld(params, sequence([0.5], 0));
+
+    // Draw order matches creation: threshold, activation, deactivation, resistance, vigor.
+    const next = reconfigureWorld(
+      world,
+      params,
+      { ...params, variability: 0.2 },
+      sequence([1, 0.5, 0.5, 0, 0.5])
+    );
+
+    expect(agentAt(world, 0).threshold).toBe(0.5);
+    expect(agentAt(next, 0).threshold).toBeCloseTo(0.6);
+    expect(agentAt(next, 0).resistance).toBeCloseTo(0.4);
+  });
+
+  it("resizes a live world, keeping each agent at its coordinates", () => {
+    const params = { ...baseParameters, width: 3, height: 2 };
+    const world = createWorld(params, sequence([], 0));
+    world.agents.forEach((_, index) => replaceAgent(world, index, { energy: index / 10 }));
+    world.triggerInputs = [
+      { agentIndex: 4, energyPerStep: 0.2, remainingSteps: 3 },
+      { agentIndex: 2, energyPerStep: 0.2, remainingSteps: 3 }
+    ];
+
+    const next = reconfigureWorld(world, params, { ...params, width: 2, height: 3 }, sequence([], 0));
+
+    expect(next.width).toBe(2);
+    expect(next.height).toBe(3);
+    // Old (x, y) -> new index: (0,0)->0, (1,0)->1, (0,1)->2, (1,1)->3; row 2 is new.
+    expect(next.agents.map((agent) => agent.energy)).toEqual([0, 0.1, 0.3, 0.4, 0, 0]);
+    // Trigger at old (1,1) follows its agent; trigger at old (2,0) fell off the edge.
+    expect(next.triggerInputs).toEqual([{ agentIndex: 3, energyPerStep: 0.2, remainingSteps: 3 }]);
+    expect(next.stats.activeTriggerCount).toBe(1);
+    expect(next.stats.tick).toBe(world.stats.tick);
+  });
+
+  it("trims history immediately when history length shrinks", () => {
+    let world = createWorld(baseParameters, sequence([], 0));
+
+    for (let tick = 0; tick < 5; tick += 1) {
+      world = stepWorld(world, baseParameters, sequence([], 0));
+    }
+
+    const next = reconfigureWorld(world, baseParameters, { ...baseParameters, maxHistory: 2 }, sequence([], 0));
+
+    expect(next.history.map((sample) => sample.tick)).toEqual([4, 5]);
+  });
+
+  it("leaves the world untouched when only step-time variables change", () => {
+    const world = createWorld(baseParameters, sequence([], 0));
+
+    expect(
+      reconfigureWorld(world, baseParameters, { ...baseParameters, triggerRate: 0.9 }, sequence([], 0))
+    ).toBe(world);
   });
 
   it("creates deterministic random streams for reproducible simulations", () => {

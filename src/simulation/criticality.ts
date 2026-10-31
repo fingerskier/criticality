@@ -1,5 +1,13 @@
 export type RandomSource = () => number;
 
+/**
+ * Per-agent deviation from the world defaults, one factor in [-1, 1] per
+ * property in draw order: threshold, activation, deactivation, resistance,
+ * vigor. Each property is `default * (1 + factor * variability)`, so keeping
+ * the factors lets default and variability changes apply to a live world.
+ */
+export type AgentVariation = readonly [number, number, number, number, number];
+
 export interface Agent {
   fuel: number;
   threshold: number;
@@ -9,6 +17,7 @@ export interface Agent {
   vigor: number;
   energy: number;
   active: boolean;
+  variation?: AgentVariation;
 }
 
 export interface TriggerInput {
@@ -195,42 +204,144 @@ export function stepWorld(
   };
 }
 
+const AGENT_DEFAULT_KEYS = [
+  "defaultThreshold",
+  "defaultActivationProbability",
+  "defaultDeactivationProbability",
+  "defaultResistance",
+  "defaultVigor",
+  "variability"
+] as const satisfies ReadonlyArray<keyof WorldParameters>;
+
+/**
+ * Apply a parameter change to a live world so every setting takes effect
+ * immediately instead of waiting for a reset:
+ *  - width/height resize the grid; agents keep their (x, y) and new cells are
+ *    created from the current defaults,
+ *  - agent defaults and variability are re-applied to every agent using its
+ *    stored variation factors (fuel, energy and activity are untouched),
+ *  - history length trims the retained samples at once.
+ * Step-time variables (trigger rate, dissipation, ...) are already read on
+ * every step, so a change that touches only those returns `world` unchanged.
+ */
+export function reconfigureWorld(
+  world: WorldState,
+  previous: WorldParameters,
+  next: WorldParameters,
+  random: RandomSource = Math.random
+): WorldState {
+  let result = resizeWorld(world, next, random);
+
+  if (AGENT_DEFAULT_KEYS.some((key) => previous[key] !== next[key])) {
+    result = { ...result, agents: result.agents.map((agent) => applyAgentDefaults(agent, next, random)) };
+  }
+
+  const maxHistory = Math.max(1, Math.round(next.maxHistory));
+
+  if (result.history.length > maxHistory) {
+    result = { ...result, history: result.history.slice(-maxHistory) };
+  }
+
+  return result;
+}
+
+function resizeWorld(
+  world: WorldState,
+  parameters: WorldParameters,
+  random: RandomSource
+): WorldState {
+  const oldWidth = normalizeDimension(world.width);
+  const oldHeight = normalizeDimension(world.height);
+  const width = normalizeDimension(parameters.width);
+  const height = normalizeDimension(parameters.height);
+
+  if (width === oldWidth && height === oldHeight) {
+    return world;
+  }
+
+  const agents: Agent[] = [];
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const kept = x < oldWidth && y < oldHeight ? world.agents[y * oldWidth + x] : undefined;
+      agents.push(kept ? cloneAgent(kept) : createAgentFromDefaults(parameters, random));
+    }
+  }
+
+  const triggerInputs = (world.triggerInputs ?? []).flatMap((input) => {
+    const x = input.agentIndex % oldWidth;
+    const y = Math.floor(input.agentIndex / oldWidth);
+    return x < width && y < height ? [{ ...input, agentIndex: y * width + x }] : [];
+  });
+  const stats = summarize(agents, world.stats.tick, {
+    ...world.stats,
+    activeTriggerCount: triggerInputs.length
+  });
+
+  return {
+    width,
+    height,
+    agents,
+    triggerInputs,
+    stats,
+    // The newest sample describes "now", so keep it in step with the resized grid.
+    history: [...world.history.slice(0, -1), stats]
+  };
+}
+
 function createAgentFromDefaults(
   parameters: WorldParameters,
   random: RandomSource
 ): Agent {
-  // Fuel always consumes exactly one draw first; the per-property bumps only
-  // draw when variability is positive, so a zero-variability world reproduces
-  // the same random stream (one fuel draw per agent) as a homogeneous grid.
-  const spread = Math.max(0, parameters.variability);
+  // Fuel always consumes exactly one draw first; the per-property variation
+  // only draws when variability is positive, so a zero-variability world
+  // reproduces the same random stream (one fuel draw per agent) as a
+  // homogeneous grid.
+  const fuel = clamp01(random()) * INITIAL_FUEL_MAX;
 
-  return {
-    fuel: clamp01(random()) * INITIAL_FUEL_MAX,
-    threshold: varyDefault(parameters.defaultThreshold, spread, random),
-    activationProbability: varyDefault(
-      parameters.defaultActivationProbability,
-      spread,
-      random
-    ),
-    deactivationProbability: varyDefault(
-      parameters.defaultDeactivationProbability,
-      spread,
-      random
-    ),
-    resistance: varyDefault(parameters.defaultResistance, spread, random),
-    vigor: varyDefault(parameters.defaultVigor, spread, random),
+  return applyAgentDefaults({
+    fuel,
+    threshold: 0,
+    activationProbability: 0,
+    deactivationProbability: 0,
+    resistance: 0,
+    vigor: 0,
     energy: 0,
     active: false
+  }, parameters, random);
+}
+
+function applyAgentDefaults(
+  agent: Agent,
+  parameters: WorldParameters,
+  random: RandomSource
+): Agent {
+  const spread = Math.max(0, parameters.variability);
+  // Variation is drawn lazily the first time it is needed, so raising
+  // variability on a homogeneous live world spreads it out immediately.
+  const variation = agent.variation ?? (spread > 0 ? drawVariation(random) : undefined);
+  const vary = (base: number, factor: number | undefined) =>
+    clamp01(base * (1 + (factor ?? 0) * spread));
+
+  return {
+    ...agent,
+    threshold: vary(parameters.defaultThreshold, variation?.[0]),
+    activationProbability: vary(parameters.defaultActivationProbability, variation?.[1]),
+    deactivationProbability: vary(parameters.defaultDeactivationProbability, variation?.[2]),
+    resistance: vary(parameters.defaultResistance, variation?.[3]),
+    vigor: vary(parameters.defaultVigor, variation?.[4]),
+    ...(variation ? { variation } : {})
   };
 }
 
-function varyDefault(base: number, spread: number, random: RandomSource): number {
-  if (spread <= 0) {
-    return clamp01(base);
-  }
-
-  const factor = 1 + (random() * 2 - 1) * spread;
-  return clamp01(base * factor);
+function drawVariation(random: RandomSource): AgentVariation {
+  return [
+    random() * 2 - 1,
+    random() * 2 - 1,
+    random() * 2 - 1,
+    random() * 2 - 1,
+    random() * 2 - 1
+  ];
 }
 
 function cloneAgent(agent: Agent | undefined): Agent {
@@ -258,7 +369,9 @@ function cloneAgent(agent: Agent | undefined): Agent {
     ),
     vigor: clamp01(source?.vigor ?? DEFAULT_PARAMETERS.defaultVigor),
     energy: clamp01(source?.energy ?? 0),
-    active: source?.active ?? false
+    active: source?.active ?? false,
+    // Variation factors are immutable once drawn, so the tuple is shared.
+    ...(source?.variation ? { variation: source.variation } : {})
   };
 }
 
