@@ -218,6 +218,10 @@ export function App() {
     loadSavedParameterSets()
   );
   const [saveName, setSaveName] = useState("");
+  // The scenario the user explicitly picked or just saved. Settings alone
+  // can't identify it: a saved copy of a preset (or two identical saved
+  // setups) matches several entries, and the first match would win.
+  const [selectedValue, setSelectedValue] = useState("");
   const [storageStatus, setStorageStatus] = useState("");
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -299,15 +303,18 @@ export function App() {
     [savedSets]
   );
 
-  const activeScenario = scenarios.find(
-    (scenario) => scenario.seed === seed && sameParameters(scenario.parameters, parameters)
-  );
+  const matchesCurrent = (scenario: Scenario) =>
+    scenario.seed === seed && sameParameters(scenario.parameters, parameters);
+  const activeScenario =
+    scenarios.find((scenario) => scenario.value === selectedValue && matchesCurrent(scenario)) ??
+    scenarios.find(matchesCurrent);
 
   const selectScenario = useCallback(
     (value: string) => {
       const scenario = scenarios.find((candidate) => candidate.value === value);
 
       if (scenario) {
+        setSelectedValue(scenario.value);
         applySettings({ parameters: scenario.parameters, seed: scenario.seed });
         setStorageStatus("");
       }
@@ -329,6 +336,7 @@ export function App() {
     }
 
     setSavedSets(loadSavedParameterSets());
+    setSelectedValue(`saved:${saved.id}`);
     setSaveName("");
     setStorageStatus(`Saved "${saved.name}".`);
   }, [saveName, parameters, seed, world.history]);
